@@ -7,7 +7,11 @@ HTTP клиент для работы с Binance API с retry логикой
 import requests
 import time
 from typing import Dict, Optional
-from .config import ScannerConfig
+
+try:
+    from config import ScannerConfig
+except ImportError:
+    from .config import ScannerConfig
 
 
 class BinanceAPIClient:

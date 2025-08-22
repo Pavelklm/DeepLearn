@@ -9,13 +9,22 @@ from typing import List, Tuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from .api_client import BinanceAPIClient
-from .symbol_manager import SymbolManager
-from .metrics_calculator import MetricsCalculator
-from .order_analyzer import OrderAnalyzer
-from .data_storage import DataStorage
-from .data_models import SymbolResult
-from .config import ScannerConfig
+try:
+    from api_client import BinanceAPIClient
+    from symbol_manager import SymbolManager
+    from metrics_calculator import MetricsCalculator
+    from order_analyzer import OrderAnalyzer
+    from data_storage import DataStorage
+    from data_models import SymbolResult
+    from config import ScannerConfig
+except ImportError:
+    from .api_client import BinanceAPIClient
+    from .symbol_manager import SymbolManager
+    from .metrics_calculator import MetricsCalculator
+    from .order_analyzer import OrderAnalyzer
+    from .data_storage import DataStorage
+    from .data_models import SymbolResult
+    from .config import ScannerConfig
 
 
 class BinanceBigOrdersScanner:
@@ -71,12 +80,18 @@ class BinanceBigOrdersScanner:
             big_orders = self.order_analyzer.find_big_orders(symbol, order_book, symbol_data, symbol_metrics)
             
             if big_orders:
+                # Динамический радиус для логирования
+                dynamic_distance = symbol_metrics.volatility_1h * ScannerConfig.VOLATILITY_MULTIPLIER
+                
                 # Логирование найденных ордеров
                 total_usd = sum(order.usd_value for order in big_orders)
                 bid_count = len([o for o in big_orders if o.type == 'BID'])
                 ask_count = len([o for o in big_orders if o.type == 'ASK'])
                 price_str = f"${symbol_data.current_price:.4f}"
-                print(f"💰 {symbol:<12} | {price_str:<12} | 🟢{bid_count}B/🔴{ask_count}A | ${total_usd:>8,.0f}")
+                volatility_str = f"v:{symbol_metrics.volatility_1h:.2f}%" if self.verbose_logs else ""
+                radius_str = f"r:±{dynamic_distance:.2f}%" if self.verbose_logs else ""
+                verbose_info = f" | {volatility_str} {radius_str}" if self.verbose_logs else ""
+                print(f"💰 {symbol:<12} | {price_str:<12} | 🟢{bid_count}B/🔴{ask_count}A | ${total_usd:>8,.0f}{verbose_info}")
                 
                 # Создаем результат обработки символа
                 symbol_result = SymbolResult(

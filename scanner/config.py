@@ -14,7 +14,7 @@ class ScannerConfig:
     MIN_ORDER_SIZE_USD = 500000  # Минимальный размер ордера в USD
     EXCLUDED_SYMBOLS = ["BTCUSDT", "ETHUSDT"]  # Исключаем BTC и ETH
     MAX_ORDERS_PER_SIDE = 3  # Максимум 3 ордера на покупку и 3 на продажу
-    MAX_DISTANCE_PERCENT = 10.0  # Максимальное расстояние от цены 10%
+    VOLATILITY_MULTIPLIER = 3.0  # Коэффициент для расчета динамического радиуса на основе волатильности
     TOP_SYMBOLS_COUNT = 250  # Количество топ символов по объему торгов
     
     # Технические настройки

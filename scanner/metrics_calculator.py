@@ -5,9 +5,15 @@
 """
 
 from typing import Dict, List
-from .api_client import BinanceAPIClient
-from .data_models import SymbolData, SymbolMetrics
-from .config import ScannerConfig
+
+try:
+    from api_client import BinanceAPIClient
+    from data_models import SymbolData, SymbolMetrics
+    from config import ScannerConfig
+except ImportError:
+    from .api_client import BinanceAPIClient
+    from .data_models import SymbolData, SymbolMetrics
+    from .config import ScannerConfig
 
 
 class MetricsCalculator:

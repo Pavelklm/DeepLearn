@@ -4,8 +4,27 @@
 CLI интерфейс для сканера больших ордеров - упрощенная версия
 """
 
-from .scanner import BinanceBigOrdersScanner
-from .config import ScannerConfig
+import sys
+import os
+
+# Add current directory to path for absolute imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+try:
+    from scanner import BinanceBigOrdersScanner
+    from config import ScannerConfig
+except ImportError:
+    try:
+        from .scanner import BinanceBigOrdersScanner
+        from .config import ScannerConfig
+    except ImportError:
+        # If both fail, try importing from the same directory
+        import scanner as scanner_module
+        import config as config_module
+        BinanceBigOrdersScanner = scanner_module.BinanceBigOrdersScanner
+        ScannerConfig = config_module.ScannerConfig
 
 
 class CLI:
@@ -24,7 +43,7 @@ class CLI:
         print("=" * 80)
         print(f"💰 Минимальный размер ордера: ${ScannerConfig.MIN_ORDER_SIZE_USD:,}")
         print(f"🚫 Исключенные символы: {', '.join(ScannerConfig.EXCLUDED_SYMBOLS)}")
-        print(f"📊 Ограничения: макс {ScannerConfig.MAX_ORDERS_PER_SIDE}+{ScannerConfig.MAX_ORDERS_PER_SIDE} ордера/символ, макс {ScannerConfig.MAX_DISTANCE_PERCENT}% от цены")
+        print(f"📊 Ограничения: макс {ScannerConfig.MAX_ORDERS_PER_SIDE}+{ScannerConfig.MAX_ORDERS_PER_SIDE} ордера/символ, динамический радиус (волатильность x{ScannerConfig.VOLATILITY_MULTIPLIER})")
         print(f"🔥 Режим: ПЕРСИСТЕНТНОЕ ХРАНЕНИЕ + НЕПРЕРЫВНОЕ СКАНИРОВАНИЕ")
         print(f"⚡ Параллельные запросы: {ScannerConfig.MAX_WORKERS} воркеров")
         print(f"📈 Фильтрация: топ-{ScannerConfig.TOP_SYMBOLS_COUNT} пар по объему торгов")
@@ -35,6 +54,7 @@ class CLI:
         print("✅ Автоматическое удаление исчезнувших ордеров")
         print("✅ BATCH оптимизация API запросов")
         print("✅ Retry логика для надежности")
+        print(f"✅ Динамический радиус поиска (коэф. {ScannerConfig.VOLATILITY_MULTIPLIER})")
         print("=" * 80)
     
     def print_instructions(self):
@@ -42,6 +62,7 @@ class CLI:
         print("🎮 УПРАВЛЕНИЕ:")
         print("   Ctrl+C - остановка сканирования")
         print("   Программа работает в непрерывном режиме")
+        print("   Подсказка: v:волатильность%, r:радиус поиска ±%")
         print("=" * 80)
     
     def run(self):

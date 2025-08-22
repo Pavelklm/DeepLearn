@@ -5,8 +5,13 @@
 """
 
 from typing import List, Dict
-from .api_client import BinanceAPIClient
-from .config import ScannerConfig
+
+try:
+    from api_client import BinanceAPIClient
+    from config import ScannerConfig
+except ImportError:
+    from .api_client import BinanceAPIClient
+    from .config import ScannerConfig
 
 
 class SymbolManager:

@@ -8,8 +8,13 @@ import json
 import os
 from typing import List, Dict
 from datetime import datetime
-from .data_models import SymbolResult, OrderData, OrderKey
-from .config import ScannerConfig
+
+try:
+    from data_models import SymbolResult, OrderData, OrderKey
+    from config import ScannerConfig
+except ImportError:
+    from .data_models import SymbolResult, OrderData, OrderKey
+    from .config import ScannerConfig
 
 
 class DataStorage:

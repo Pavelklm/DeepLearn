@@ -6,8 +6,12 @@
 
 from typing import List, Dict
 from datetime import datetime
-from .data_models import OrderData, SymbolData, SymbolMetrics
-from .config import ScannerConfig
+try:
+    from data_models import OrderData, SymbolData, SymbolMetrics
+    from config import ScannerConfig
+except ImportError:
+    from .data_models import OrderData, SymbolData, SymbolMetrics
+    from .config import ScannerConfig
 
 
 class OrderAnalyzer:
@@ -16,7 +20,7 @@ class OrderAnalyzer:
     def __init__(self):
         self.min_order_size_usd = ScannerConfig.MIN_ORDER_SIZE_USD
         self.max_orders_per_side = ScannerConfig.MAX_ORDERS_PER_SIDE
-        self.max_distance_percent = ScannerConfig.MAX_DISTANCE_PERCENT
+        self.volatility_multiplier = ScannerConfig.VOLATILITY_MULTIPLIER
     
     def find_big_orders(self, symbol: str, order_book: Dict, symbol_data: SymbolData, 
                        symbol_metrics: SymbolMetrics) -> List[OrderData]:
@@ -28,6 +32,9 @@ class OrderAnalyzer:
         
         current_price = symbol_data.current_price
         
+        # Динамический радиус на основе волатильности
+        dynamic_distance = symbol_metrics.volatility_1h * self.volatility_multiplier
+        
         # Временные списки для сортировки
         ask_orders = []
         bid_orders = []
@@ -36,10 +43,10 @@ class OrderAnalyzer:
         avg_order_size = self._calculate_average_order_size(order_book)
         
         # Обрабатываем аски (продажи)
-        ask_orders = self._process_asks(order_book, current_price, avg_order_size, symbol)
+        ask_orders = self._process_asks(order_book, current_price, avg_order_size, symbol, dynamic_distance)
         
         # Обрабатываем биды (покупки)
-        bid_orders = self._process_bids(order_book, current_price, avg_order_size, symbol)
+        bid_orders = self._process_bids(order_book, current_price, avg_order_size, symbol, dynamic_distance)
         
         # Сортируем и берем топ-N самых больших ордеров с каждой стороны
         # ASK: сортируем по размеру (самые большие сначала)
@@ -68,7 +75,7 @@ class OrderAnalyzer:
         return sum(all_order_sizes) / len(all_order_sizes) if all_order_sizes else 1
     
     def _process_asks(self, order_book: Dict, current_price: float, 
-                     avg_order_size: float, symbol: str) -> List[OrderData]:
+                     avg_order_size: float, symbol: str, dynamic_distance: float) -> List[OrderData]:
         """Обрабатываем ордера на продажу (аски)"""
         ask_orders = []
         
@@ -80,8 +87,8 @@ class OrderAnalyzer:
             if usd_value >= self.min_order_size_usd:
                 distance_percent = ((price - current_price) / current_price) * 100
                 
-                # Пропускаем ордера дальше max_distance_percent от цены
-                if abs(distance_percent) > self.max_distance_percent:
+                # Пропускаем ордера дальше динамического радиуса
+                if abs(distance_percent) > dynamic_distance:
                     continue
                 
                 # Количество ордеров в радиусе ±0.1% от цены
@@ -105,7 +112,7 @@ class OrderAnalyzer:
         return ask_orders
     
     def _process_bids(self, order_book: Dict, current_price: float, 
-                     avg_order_size: float, symbol: str) -> List[OrderData]:
+                     avg_order_size: float, symbol: str, dynamic_distance: float) -> List[OrderData]:
         """Обрабатываем ордера на покупку (биды)"""
         bid_orders = []
         
@@ -117,8 +124,8 @@ class OrderAnalyzer:
             if usd_value >= self.min_order_size_usd:
                 distance_percent = ((price - current_price) / current_price) * 100
                 
-                # Пропускаем ордера дальше max_distance_percent от цены
-                if abs(distance_percent) > self.max_distance_percent:
+                # Пропускаем ордера дальше динамического радиуса
+                if abs(distance_percent) > dynamic_distance:
                     continue
                 
                 # Количество ордеров в радиусе ±0.1% от цены
