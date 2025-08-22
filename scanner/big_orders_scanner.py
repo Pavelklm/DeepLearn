@@ -25,16 +25,95 @@ class BinanceBigOrdersScanner:
         self.max_orders_per_side = 3  # Максимум 3 ордера на покупку и 3 на продажу
         self.max_distance_percent = 10.0  # Максимальное расстояние от цены 10%
         self.order_history = {}  # Для отслеживания повторяющихся ордеров
-        self.max_workers = 7  # Количество параллельных воркеров
+        self.max_workers = 4  # Количество параллельных воркеров (снижено для retry стабильности)
+        self.top_symbols_count = 250  # Количество топ символов по объему торгов (капитализации)
+        
+    def make_request_with_retry(self, url: str, params=None, max_retries: int = 3, timeout: int = 10) -> Dict:
+        """Выполняем HTTP запрос с retry логикой для обработки rate limits и временных ошибок"""
+        for attempt in range(max_retries + 1):  # +1 чтобы включить изначальную попытку
+            try:
+                response = requests.get(url, params=params, timeout=timeout)
+                
+                # Обработка rate limiting (429)
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', 60))  # Default 60 сек
+                    if attempt < max_retries:
+                        print(f"  Rate limit (429): ждем {retry_after} сек, попытка {attempt + 1}/{max_retries + 1}")
+                        time.sleep(retry_after)
+                        continue
+                    else:
+                        print(f"  Rate limit: превышено максимальное количество попыток")
+                        response.raise_for_status()
+                
+                # Обработка серверных ошибок (5xx)
+                elif 500 <= response.status_code < 600:
+                    if attempt < max_retries:
+                        delay = (2 ** attempt)  # Экспоненциальная задержка: 1, 2, 4 сек
+                        print(f"  Серверная ошибка {response.status_code}: повтор через {delay} сек, попытка {attempt + 1}/{max_retries + 1}")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        response.raise_for_status()
+                
+                # Успешный ответ
+                response.raise_for_status()
+                return response.json()
+                
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                if attempt < max_retries:
+                    delay = (2 ** attempt)  # Экспоненциальная задержка
+                    print(f"  Сетевая ошибка ({type(e).__name__}): повтор через {delay} сек, попытка {attempt + 1}/{max_retries + 1}")
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"  Сетевая ошибка: превышено максимальное количество попыток")
+                    raise e
+            
+            except requests.exceptions.RequestException as e:
+                # Для других ошибок HTTP не повторяем
+                print(f"  HTTP ошибка (не повторяется): {e}")
+                raise e
+        
+        # Не должны сюда попасть, но на всякий случай
+        raise Exception(f"Неожиданная ошибка после {max_retries + 1} попыток")
+        
+    def filter_top_symbols_by_volume(self, symbols: List[str], all_tickers: Dict[str, Dict], top_count: int = 250) -> List[str]:
+        """Фильтруем топ-N символов по объему торгов за 24ч (самые капитализированные пары)"""
+        try:
+            # Создаем список (символ, объем_торгов) для сортировки
+            symbol_volumes = []
+            for symbol in symbols:
+                ticker_data = all_tickers.get(symbol)
+                if ticker_data:
+                    # Используем quoteVolume (общий объем в USDT за 24ч) как метрику капитализации
+                    volume_24h = float(ticker_data.get('quoteVolume', 0))
+                    symbol_volumes.append((symbol, volume_24h))
+            
+            # Сортируем по объему торгов (по убыванию) и берем топ-N
+            symbol_volumes.sort(key=lambda x: x[1], reverse=True)
+            top_symbols = [symbol for symbol, volume in symbol_volumes[:top_count]]
+            
+            print(f"Отфильтровано: {len(symbols)} → {len(top_symbols)} символов (топ-{top_count} по объему торгов)")
+            
+            # Показываем примеры топ-10 для информации
+            if len(symbol_volumes) >= 10:
+                print("Топ-10 по объему торгов:")
+                for i, (symbol, volume) in enumerate(symbol_volumes[:10], 1):
+                    volume_millions = volume / 1_000_000  # Конвертируем в миллионы USDT
+                    print(f"  {i:2d}. {symbol:12s} - {volume_millions:8.1f}M USDT")
+            
+            return top_symbols
+            
+        except Exception as e:
+            print(f"Ошибка фильтрации символов по объему: {e}")
+            print("Используем все символы без фильтрации")
+            return symbols
         
     def get_active_symbols(self) -> List[str]:
         """Получаем список активных фьючерсных символов"""
         try:
             url = f"{self.base_url}/fapi/v1/exchangeInfo"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
+            data = self.make_request_with_retry(url, timeout=10)
             symbols = []
             
             for symbol_info in data['symbols']:
@@ -52,31 +131,43 @@ class BinanceBigOrdersScanner:
             print(f"Ошибка получения символов: {e}")
             return []
     
-    def get_symbol_data(self, symbol: str) -> Dict:
+    def get_all_tickers_batch(self) -> Dict[str, Dict]:
+        """Получаем 24hr статистику для ВСЕХ символов одним запросом (BATCH ОПТИМИЗАЦИЯ)"""
+        try:
+            url = f"{self.base_url}/fapi/v1/ticker/24hr"
+            # БЕЗ параметра symbol = получаем ВСЕ символы!
+            tickers_list = self.make_request_with_retry(url, timeout=10)
+            tickers_dict = {ticker['symbol']: ticker for ticker in tickers_list}
+            
+            print(f"Получены ticker данные для {len(tickers_dict)} символов одним запросом")
+            return tickers_dict
+            
+        except Exception as e:
+            print(f"Ошибка получения batch ticker: {e}")
+            return {}
+    
+    def get_symbol_data(self, symbol: str, ticker_data: Dict = None) -> Dict:
         """Получаем полные данные символа: цену, статистику 24ч, свечи для волатильности"""
         try:
-            # Текущая цена
-            price_url = f"{self.base_url}/fapi/v1/ticker/price"
-            price_response = requests.get(price_url, params={"symbol": symbol}, timeout=5)
-            price_response.raise_for_status()
-            current_price = float(price_response.json()['price'])
+            # Используем переданные ticker_data (batch) или делаем fallback запрос
+            if ticker_data:
+                # BATCH режим: данные уже получены
+                current_price = float(ticker_data['lastPrice'])
+            else:
+                # FALLBACK режим: отдельный запрос (если batch не сработал)
+                print(f"  FALLBACK: отдельный ticker запрос для {symbol}")
+                ticker_url = f"{self.base_url}/fapi/v1/ticker/24hr"
+                ticker_data = self.make_request_with_retry(ticker_url, params={"symbol": symbol}, timeout=5)
+                current_price = float(ticker_data['lastPrice'])
             
-            # 24hr статистика
-            ticker_url = f"{self.base_url}/fapi/v1/ticker/24hr"
-            ticker_response = requests.get(ticker_url, params={"symbol": symbol}, timeout=5)
-            ticker_response.raise_for_status()
-            ticker_data = ticker_response.json()
-            
-            # Свечи за последние 2 часа для расчета волатильности
+            # Свечи за последний 1 час для расчета волатильности (оптимизировано)
             klines_url = f"{self.base_url}/fapi/v1/klines"
             klines_params = {
                 "symbol": symbol,
                 "interval": "5m",
-                "limit": 24  # 24 свечи по 5 минут = 2 часа
+                "limit": 12
             }
-            klines_response = requests.get(klines_url, params=klines_params, timeout=5)
-            klines_response.raise_for_status()
-            klines_data = klines_response.json()
+            klines_data = self.make_request_with_retry(klines_url, params=klines_params, timeout=5)
             
             return {
                 'current_price': current_price,
@@ -93,13 +184,10 @@ class BinanceBigOrdersScanner:
         try:
             url = f"{self.base_url}/fapi/v1/depth"
             params = {
-                "symbol": symbol,
-                "limit": 1000  # Максимальная глубина стакана
+            "symbol": symbol,
+            "limit": 500  # Оптимальная глубина стакана (экономия weight)
             }
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            
-            return response.json()
+            return self.make_request_with_retry(url, params=params, timeout=10)
             
         except Exception as e:
             print(f"Ошибка получения стакана для {symbol}: {e}")
@@ -325,13 +413,13 @@ class BinanceBigOrdersScanner:
             print(f"Ошибка сохранения данных: {e}")
     
     def process_symbol_with_index(self, symbol_task: tuple) -> int:
-        """Обрабатываем один символ с индексом"""
-        symbol, index, total = symbol_task
+        """Обрабатываем один символ с индексом (и batch ticker данными)"""
+        symbol, index, total, ticker_data = symbol_task  # Теперь тупл 4 элемента
         try:
             print(f"Сканирование {symbol} ({index}/{total})")
             
-            # Получаем полные данные символа
-            symbol_data = self.get_symbol_data(symbol)
+            # Получаем полные данные символа (используя batch ticker)
+            symbol_data = self.get_symbol_data(symbol, ticker_data)
             if not symbol_data:
                 return 0
             
@@ -358,21 +446,39 @@ class BinanceBigOrdersScanner:
             return 0
     
     def scan_all_symbols(self):
-        """Основной метод сканирования всех символов с параллельными запросами"""
-        print(f"Запуск сканирования больших ордеров ({self.max_workers} воркеров)...")
+        """Основной метод сканирования топ-250 символов с BATCH оптимизацией и фильтром по капитализации"""
+        print(f"Запуск сканирования с BATCH оптимизацией + фильтр по капитализации ({self.max_workers} воркеров)...")
         
         # Очищаем старые данные при каждом запуске
         self.clear_data_file()
         
+        # Получаем список активных символов
         symbols = self.get_active_symbols()
         if not symbols:
             print("Не удалось получить список символов")
             return
         
+        # КЛЮЧЕВОЕ: Получаем ВСЕ ticker данные одним запросом!
+        print("Получаем ВСЕ ticker данные одним batch запросом...")
+        all_tickers = self.get_all_tickers_batch()
+        if not all_tickers:
+            print("Ошибка получения batch ticker! Отменяем сканирование.")
+            return
+        
+        # НОВОЕ: Фильтруем только топ-N символов по объему торгов (капитализации)
+        print(f"Фильтруем топ-{self.top_symbols_count} символов по объему торгов...")
+        filtered_symbols = self.filter_top_symbols_by_volume(symbols, all_tickers, top_count=self.top_symbols_count)
+        
         total_big_orders = 0
         
-        # Создаем кортежи (символ, индекс, общее_количество)
-        symbol_tasks = [(symbol, i+1, len(symbols)) for i, symbol in enumerate(symbols)]
+        # Создаем кортежи (символ, индекс, общее_количество, ticker_data) для отфильтрованных символов
+        symbol_tasks = []
+        for i, symbol in enumerate(filtered_symbols):
+            ticker_data = all_tickers.get(symbol)  # Получаем ticker данные для символа
+            if ticker_data:  # Обрабатываем только символы с ticker данными
+                symbol_tasks.append((symbol, i+1, len(filtered_symbols), ticker_data))
+        
+        print(f"Обрабатываем {len(symbol_tasks)} символов...")
         
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             results = executor.map(self.process_symbol_with_index, symbol_tasks)
@@ -405,14 +511,17 @@ def main():
     """Главная функция"""
     scanner = BinanceBigOrdersScanner()
     
-    print("=== СКРИННЕР БОЛЬШИХ ЗАЯВОК BINANCE FUTURES ===")
+    print("=== СКРИННЕР БОЛЬШИХ ЗАЯВОК BINANCE FUTURES (ОПТИМИЗИРОВАН ПО КАПИТАЛИЗАЦИИ) ===")
     print("Минимальный размер ордера: $500,000")
     print("Исключенные символы: BTC, ETH")
     print("Ограничения: макс 3+3 ордера/символ, макс 10% от цены")
     print("Отслеживание повторов со счетчиком")
+    print(f"Фильтрация: только топ-{scanner.top_symbols_count} пар по объему торгов (самые капитализированные)")
     print("Дополнительные метрики: volatility_1h, volume_ratio, rank_in_side, size_vs_average")
     print("Вывод: JSON объекты с массивом ордеров")
     print(f"Параллельные запросы: {scanner.max_workers} воркеров")
+    print(f"ОПТИМИЗАЦИИ: BATCH ticker запросы (1 вместо 471+), топ-{scanner.top_symbols_count} по капитализации, стакан 500")
+    print("НАДЕЖНОСТЬ: Retry логика для 429/5xx ошибок, экспоненциальные задержки")
     print("=" * 50)
     
     try:
