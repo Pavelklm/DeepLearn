@@ -1,0 +1,640 @@
+[
+  {
+    "symbol": "XRPUSDT",
+    "timestamp": "2025-08-22T03:40:05.559241",
+    "current_price": 2.8633,
+    "volatility_1h": 0.1109163080761723,
+    "volume_ratio": 0.9884550122949796,
+    "price_movement_5min": -0.0034923517496600874,
+    "is_round_level": false,
+    "orders_count": 6,
+    "orders": [
+      {
+        "symbol": "XRPUSDT",
+        "type": "ASK",
+        "price": 2.8887,
+        "quantity": 394688.3,
+        "usd_value": 1140136.09221,
+        "distance_percent": 0.8870883246603521,
+        "size_vs_average": 22.921182455816986,
+        "orders_around_price": 57,
+        "timestamp": "2025-08-22T03:40:05.557930",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "XRPUSDT",
+        "type": "ASK",
+        "price": 2.8794,
+        "quantity": 333728.4,
+        "usd_value": 960937.5549600001,
+        "distance_percent": 0.5622882687807698,
+        "size_vs_average": 19.318592908668244,
+        "orders_around_price": 57,
+        "timestamp": "2025-08-22T03:40:05.557844",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "XRPUSDT",
+        "type": "ASK",
+        "price": 2.8696,
+        "quantity": 190896.2,
+        "usd_value": 547795.7355200001,
+        "distance_percent": 0.22002584430552063,
+        "size_vs_average": 11.0128309139254,
+        "orders_around_price": 57,
+        "timestamp": "2025-08-22T03:40:05.557668",
+        "rank_in_side": 3,
+        "count": 1
+      },
+      {
+        "symbol": "XRPUSDT",
+        "type": "BID",
+        "price": 2.78,
+        "quantity": 1771434.0,
+        "usd_value": 4924586.52,
+        "distance_percent": -2.9092306080396875,
+        "size_vs_average": 99.0033969765656,
+        "orders_around_price": 55,
+        "timestamp": "2025-08-22T03:40:05.558947",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "XRPUSDT",
+        "type": "BID",
+        "price": 2.81,
+        "quantity": 1268313.9,
+        "usd_value": 3563962.059,
+        "distance_percent": -1.8614884922990997,
+        "size_vs_average": 71.64953831222263,
+        "orders_around_price": 57,
+        "timestamp": "2025-08-22T03:40:05.558529",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "XRPUSDT",
+        "type": "BID",
+        "price": 2.8,
+        "quantity": 748157.4,
+        "usd_value": 2094840.72,
+        "distance_percent": -2.210735864212634,
+        "size_vs_average": 42.11446921737391,
+        "orders_around_price": 56,
+        "timestamp": "2025-08-22T03:40:05.558618",
+        "rank_in_side": 3,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "ETCUSDT",
+    "timestamp": "2025-08-22T03:40:05.593517",
+    "current_price": 21.09,
+    "volatility_1h": 0.1386355350880412,
+    "volume_ratio": 0.9934188787976945,
+    "price_movement_5min": 0.00948406676782479,
+    "is_round_level": false,
+    "orders_count": 2,
+    "orders": [
+      {
+        "symbol": "ETCUSDT",
+        "type": "BID",
+        "price": 19.956,
+        "quantity": 30336.71,
+        "usd_value": 605399.3847599999,
+        "distance_percent": -5.3769559032716945,
+        "size_vs_average": 79.58305940892033,
+        "orders_around_price": 20,
+        "timestamp": "2025-08-22T03:40:05.593158",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "ETCUSDT",
+        "type": "BID",
+        "price": 19.724,
+        "quantity": 27713.22,
+        "usd_value": 546615.55128,
+        "distance_percent": -6.47700331910858,
+        "size_vs_average": 71.8556030720139,
+        "orders_around_price": 18,
+        "timestamp": "2025-08-22T03:40:05.593257",
+        "rank_in_side": 2,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "ADAUSDT",
+    "timestamp": "2025-08-22T03:40:08.173220",
+    "current_price": 0.856,
+    "volatility_1h": 0.19412330857669383,
+    "volume_ratio": 0.9865302272047055,
+    "price_movement_5min": 0.0,
+    "is_round_level": false,
+    "orders_count": 3,
+    "orders": [
+      {
+        "symbol": "ADAUSDT",
+        "type": "BID",
+        "price": 0.8,
+        "quantity": 1749315.0,
+        "usd_value": 1399452.0,
+        "distance_percent": -6.542056074766347,
+        "size_vs_average": 55.79263542829357,
+        "orders_around_price": 17,
+        "timestamp": "2025-08-22T03:40:08.172574",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "ADAUSDT",
+        "type": "BID",
+        "price": 0.78,
+        "quantity": 1643379.0,
+        "usd_value": 1281835.62,
+        "distance_percent": -8.878504672897192,
+        "size_vs_average": 51.10356584267318,
+        "orders_around_price": 15,
+        "timestamp": "2025-08-22T03:40:08.172759",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "ADAUSDT",
+        "type": "BID",
+        "price": 0.7708,
+        "quantity": 1446251.0,
+        "usd_value": 1114770.2708,
+        "distance_percent": -9.953271028037376,
+        "size_vs_average": 44.443090084579175,
+        "orders_around_price": 15,
+        "timestamp": "2025-08-22T03:40:08.172918",
+        "rank_in_side": 3,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "BNBUSDT",
+    "timestamp": "2025-08-22T03:40:08.955397",
+    "current_price": 843.38,
+    "volatility_1h": 0.08053781772707917,
+    "volume_ratio": 0.9853838700042745,
+    "price_movement_5min": 0.01185845745185736,
+    "is_round_level": false,
+    "orders_count": 2,
+    "orders": [
+      {
+        "symbol": "BNBUSDT",
+        "type": "BID",
+        "price": 833.0,
+        "quantity": 3089.14,
+        "usd_value": 2573253.62,
+        "distance_percent": -1.230761934122222,
+        "size_vs_average": 262.54346257176746,
+        "orders_around_price": 99,
+        "timestamp": "2025-08-22T03:40:08.955150",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "BNBUSDT",
+        "type": "BID",
+        "price": 835.0,
+        "quantity": 1776.65,
+        "usd_value": 1483502.75,
+        "distance_percent": -0.9936209063530077,
+        "size_vs_average": 151.35855466890945,
+        "orders_around_price": 154,
+        "timestamp": "2025-08-22T03:40:08.955035",
+        "rank_in_side": 2,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "DOGEUSDT",
+    "timestamp": "2025-08-22T03:40:15.177304",
+    "current_price": 0.21685,
+    "volatility_1h": 0.15703160188495796,
+    "volume_ratio": 0.9919794221089382,
+    "price_movement_5min": 0.0,
+    "is_round_level": true,
+    "orders_count": 6,
+    "orders": [
+      {
+        "symbol": "DOGEUSDT",
+        "type": "ASK",
+        "price": 0.224,
+        "quantity": 4544569.0,
+        "usd_value": 1017983.456,
+        "distance_percent": 3.2972100530320585,
+        "size_vs_average": 31.136656822192734,
+        "orders_around_price": 45,
+        "timestamp": "2025-08-22T03:40:15.176291",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "DOGEUSDT",
+        "type": "ASK",
+        "price": 0.226,
+        "quantity": 4251953.0,
+        "usd_value": 960941.378,
+        "distance_percent": 4.219506571362702,
+        "size_vs_average": 29.391933372472202,
+        "orders_around_price": 45,
+        "timestamp": "2025-08-22T03:40:15.176495",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "DOGEUSDT",
+        "type": "ASK",
+        "price": 0.2259,
+        "quantity": 3403815.0,
+        "usd_value": 768921.8084999999,
+        "distance_percent": 4.173391745446162,
+        "size_vs_average": 23.518706844646694,
+        "orders_around_price": 45,
+        "timestamp": "2025-08-22T03:40:15.176408",
+        "rank_in_side": 3,
+        "count": 1
+      },
+      {
+        "symbol": "DOGEUSDT",
+        "type": "BID",
+        "price": 0.2105,
+        "quantity": 2668252.0,
+        "usd_value": 561667.046,
+        "distance_percent": -2.92829144569979,
+        "size_vs_average": 17.17948750204123,
+        "orders_around_price": 43,
+        "timestamp": "2025-08-22T03:40:15.176797",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "DOGEUSDT",
+        "type": "BID",
+        "price": 0.21435,
+        "quantity": 2585849.0,
+        "usd_value": 554276.73315,
+        "distance_percent": -1.1528706479132924,
+        "size_vs_average": 16.953442929643888,
+        "orders_around_price": 43,
+        "timestamp": "2025-08-22T03:40:15.176645",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "DOGEUSDT",
+        "type": "BID",
+        "price": 0.21,
+        "quantity": 2424784.0,
+        "usd_value": 509204.63999999996,
+        "distance_percent": -3.158865575282451,
+        "size_vs_average": 15.574840666121979,
+        "orders_around_price": 42,
+        "timestamp": "2025-08-22T03:40:15.176894",
+        "rank_in_side": 3,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "KAVAUSDT",
+    "timestamp": "2025-08-22T03:40:17.625665",
+    "current_price": 0.3724,
+    "volatility_1h": 0.04704611576162084,
+    "volume_ratio": 1.0017647508222967,
+    "price_movement_5min": 0.0,
+    "is_round_level": false,
+    "orders_count": 2,
+    "orders": [
+      {
+        "symbol": "KAVAUSDT",
+        "type": "BID",
+        "price": 0.3634,
+        "quantity": 5851774.4,
+        "usd_value": 2126534.81696,
+        "distance_percent": -2.4167561761546748,
+        "size_vs_average": 533.6835155622558,
+        "orders_around_price": 7,
+        "timestamp": "2025-08-22T03:40:17.624852",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "KAVAUSDT",
+        "type": "BID",
+        "price": 0.363,
+        "quantity": 2694577.1,
+        "usd_value": 978131.4873,
+        "distance_percent": -2.5241675617615518,
+        "size_vs_average": 245.4757131936585,
+        "orders_around_price": 7,
+        "timestamp": "2025-08-22T03:40:17.624923",
+        "rank_in_side": 2,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "DOTUSDT",
+    "timestamp": "2025-08-22T03:40:17.810826",
+    "current_price": 3.81,
+    "volatility_1h": 0.12933647799435485,
+    "volume_ratio": 0.9931251970803844,
+    "price_movement_5min": 0.0,
+    "is_round_level": false,
+    "orders_count": 3,
+    "orders": [
+      {
+        "symbol": "DOTUSDT",
+        "type": "BID",
+        "price": 3.61,
+        "quantity": 314668.3,
+        "usd_value": 1135952.5629999998,
+        "distance_percent": -5.249343832021002,
+        "size_vs_average": 70.18054138927626,
+        "orders_around_price": 7,
+        "timestamp": "2025-08-22T03:40:17.810187",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "DOTUSDT",
+        "type": "BID",
+        "price": 3.56,
+        "quantity": 307576.7,
+        "usd_value": 1094973.0520000001,
+        "distance_percent": -6.561679790026247,
+        "size_vs_average": 67.64877698156852,
+        "orders_around_price": 7,
+        "timestamp": "2025-08-22T03:40:17.810271",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "DOTUSDT",
+        "type": "BID",
+        "price": 3.51,
+        "quantity": 311027.4,
+        "usd_value": 1091706.174,
+        "distance_percent": -7.8740157480315025,
+        "size_vs_average": 67.44694525534993,
+        "orders_around_price": 7,
+        "timestamp": "2025-08-22T03:40:17.810347",
+        "rank_in_side": 3,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "SOLUSDT",
+    "timestamp": "2025-08-22T03:40:20.884867",
+    "current_price": 181.38,
+    "volatility_1h": 0.11891834433486535,
+    "volume_ratio": 0.98407383197556,
+    "price_movement_5min": 0.04412575841146392,
+    "is_round_level": false,
+    "orders_count": 6,
+    "orders": [
+      {
+        "symbol": "SOLUSDT",
+        "type": "ASK",
+        "price": 181.5,
+        "quantity": 22390.0,
+        "usd_value": 4063785.0,
+        "distance_percent": 0.06615944426067072,
+        "size_vs_average": 45.32380023657237,
+        "orders_around_price": 28,
+        "timestamp": "2025-08-22T03:40:20.880156",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "SOLUSDT",
+        "type": "ASK",
+        "price": 190.0,
+        "quantity": 8942.03,
+        "usd_value": 1698985.7000000002,
+        "distance_percent": 4.75245341272467,
+        "size_vs_average": 18.94895730743459,
+        "orders_around_price": 39,
+        "timestamp": "2025-08-22T03:40:20.882013",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "SOLUSDT",
+        "type": "ASK",
+        "price": 182.95,
+        "quantity": 9174.7,
+        "usd_value": 1678511.365,
+        "distance_percent": 0.8655860624104053,
+        "size_vs_average": 18.72060500299017,
+        "orders_around_price": 38,
+        "timestamp": "2025-08-22T03:40:20.880949",
+        "rank_in_side": 3,
+        "count": 1
+      },
+      {
+        "symbol": "SOLUSDT",
+        "type": "BID",
+        "price": 175.0,
+        "quantity": 35312.42,
+        "usd_value": 6179673.5,
+        "distance_percent": -3.5174771198588575,
+        "size_vs_average": 68.9225161373547,
+        "orders_around_price": 35,
+        "timestamp": "2025-08-22T03:40:20.883948",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "SOLUSDT",
+        "type": "BID",
+        "price": 177.0,
+        "quantity": 18614.55,
+        "usd_value": 3294775.35,
+        "distance_percent": -2.4148197155143873,
+        "size_vs_average": 36.74695875588468,
+        "orders_around_price": 36,
+        "timestamp": "2025-08-22T03:40:20.883614",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "SOLUSDT",
+        "type": "BID",
+        "price": 176.0,
+        "quantity": 17622.82,
+        "usd_value": 3101616.32,
+        "distance_percent": -2.9661484176866226,
+        "size_vs_average": 34.59263679012859,
+        "orders_around_price": 35,
+        "timestamp": "2025-08-22T03:40:20.883706",
+        "rank_in_side": 3,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "UNIUSDT",
+    "timestamp": "2025-08-22T03:40:23.192491",
+    "current_price": 10.297,
+    "volatility_1h": 0.1862250154173992,
+    "volume_ratio": 0.9916477376984323,
+    "price_movement_5min": 0.02914319020788919,
+    "is_round_level": false,
+    "orders_count": 1,
+    "orders": [
+      {
+        "symbol": "UNIUSDT",
+        "type": "BID",
+        "price": 9.45,
+        "quantity": 106586.0,
+        "usd_value": 1007237.7,
+        "distance_percent": -8.22569680489464,
+        "size_vs_average": 154.88731107500337,
+        "orders_around_price": 19,
+        "timestamp": "2025-08-22T03:40:23.192316",
+        "rank_in_side": 1,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "AVAXUSDT",
+    "timestamp": "2025-08-22T03:40:23.343869",
+    "current_price": 22.869,
+    "volatility_1h": 0.14350498784189478,
+    "volume_ratio": 0.9886612996985007,
+    "price_movement_5min": 0.03937007874015897,
+    "is_round_level": false,
+    "orders_count": 2,
+    "orders": [
+      {
+        "symbol": "AVAXUSDT",
+        "type": "ASK",
+        "price": 23.038,
+        "quantity": 33267.0,
+        "usd_value": 766405.1460000001,
+        "distance_percent": 0.7389916480825592,
+        "size_vs_average": 65.34145452032793,
+        "orders_around_price": 46,
+        "timestamp": "2025-08-22T03:40:23.343238",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "AVAXUSDT",
+        "type": "BID",
+        "price": 22.688,
+        "quantity": 34479.0,
+        "usd_value": 782259.5519999999,
+        "distance_percent": -0.7914644278280684,
+        "size_vs_average": 66.6931546674402,
+        "orders_around_price": 44,
+        "timestamp": "2025-08-22T03:40:23.343481",
+        "rank_in_side": 1,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "FILUSDT",
+    "timestamp": "2025-08-22T03:40:25.998807",
+    "current_price": 2.398,
+    "volatility_1h": 0.13572927342491417,
+    "volume_ratio": 0.9959213401520329,
+    "price_movement_5min": 0.0,
+    "is_round_level": false,
+    "orders_count": 3,
+    "orders": [
+      {
+        "symbol": "FILUSDT",
+        "type": "BID",
+        "price": 2.227,
+        "quantity": 245746.5,
+        "usd_value": 547277.4554999999,
+        "distance_percent": -7.130942452043381,
+        "size_vs_average": 32.5515414446125,
+        "orders_around_price": 5,
+        "timestamp": "2025-08-22T03:40:25.998369",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "FILUSDT",
+        "type": "BID",
+        "price": 2.213,
+        "quantity": 247266.9,
+        "usd_value": 547201.6497,
+        "distance_percent": -7.714762301918267,
+        "size_vs_average": 32.54703258787879,
+        "orders_around_price": 5,
+        "timestamp": "2025-08-22T03:40:25.998448",
+        "rank_in_side": 2,
+        "count": 1
+      },
+      {
+        "symbol": "FILUSDT",
+        "type": "BID",
+        "price": 2.182,
+        "quantity": 250573.5,
+        "usd_value": 546751.377,
+        "distance_percent": -9.007506255212684,
+        "size_vs_average": 32.52025079683637,
+        "orders_around_price": 5,
+        "timestamp": "2025-08-22T03:40:25.998521",
+        "rank_in_side": 3,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "symbol": "IOTXUSDT",
+    "timestamp": "2025-08-22T03:40:38.344712",
+    "current_price": 0.028,
+    "volatility_1h": 0.10131869740073428,
+    "volume_ratio": 1.0076255235623184,
+    "price_movement_5min": 0.0,
+    "is_round_level": false,
+    "orders_count": 2,
+    "orders": [
+      {
+        "symbol": "IOTXUSDT",
+        "type": "BID",
+        "price": 0.02701,
+        "quantity": 60805651.0,
+        "usd_value": 1642360.63351,
+        "distance_percent": -3.53571428571429,
+        "size_vs_average": 429.59613078255813,
+        "orders_around_price": 5,
+        "timestamp": "2025-08-22T03:40:38.344263",
+        "rank_in_side": 1,
+        "count": 1
+      },
+      {
+        "symbol": "IOTXUSDT",
+        "type": "BID",
+        "price": 0.02643,
+        "quantity": 35944000.0,
+        "usd_value": 949999.9199999999,
+        "distance_percent": -5.607142857142864,
+        "size_vs_average": 248.4937117638571,
+        "orders_around_price": 5,
+        "timestamp": "2025-08-22T03:40:38.344364",
+        "rank_in_side": 2,
+        "count": 1
+      }
+    ]
+  }
+]
