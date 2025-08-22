@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Скриннер больших заявок на Binance Futures
+Скриннер больших заявок на Binance Futures с ПЕРСИСТЕНТНЫМ ХРАНЕНИЕМ
 Минималистичный но рабочий вариант для поиска заявок 500k+ USD
 Ограничения: максимум 3 ордера на покупку и 3 на продажу, расстояние макс 10%
-Отслеживание повторяющихся ордеров со счетчиком
+Отслеживание времени жизни ордеров + персистентность между итерациями
 """
 
 import requests
@@ -24,9 +24,13 @@ class BinanceBigOrdersScanner:
         self.request_delay = 0  # Задержка между запросами (соблюдение лимитов)
         self.max_orders_per_side = 3  # Максимум 3 ордера на покупку и 3 на продажу
         self.max_distance_percent = 10.0  # Максимальное расстояние от цены 10%
-        self.order_history = {}  # Для отслеживания повторяющихся ордеров
-        self.max_workers = 4  # Количество параллельных воркеров (снижено для retry стабильности)
+        self.order_history = {}  # DEPRECATED - больше не используется в новой логике
+        self.max_workers = 5  # Количество параллельных воркеров (снижено для retry стабильности)
         self.top_symbols_count = 250  # Количество топ символов по объему торгов (капитализации)
+        self.persistent_mode = True  # НОВОЕ: Режим персистентного хранения
+        self.price_tolerance = 0.0001  # НОВОЕ: Допустимое изменение цены для считания ордера "тем же" (0.01%)
+        self.first_run = True  # НОВОЕ: Флаг первого запуска для однократной очистки
+        self.verbose_logs = False  # НОВОЕ: Детальные логи (можно включить для отладки)
         
     def make_request_with_retry(self, url: str, params=None, max_retries: int = 3, timeout: int = 10) -> Dict:
         """Выполняем HTTP запрос с retry логикой для обработки rate limits и временных ошибок"""
@@ -93,14 +97,15 @@ class BinanceBigOrdersScanner:
             symbol_volumes.sort(key=lambda x: x[1], reverse=True)
             top_symbols = [symbol for symbol, volume in symbol_volumes[:top_count]]
             
-            print(f"Отфильтровано: {len(symbols)} → {len(top_symbols)} символов (топ-{top_count} по объему торгов)")
-            
-            # Показываем примеры топ-10 для информации
-            if len(symbol_volumes) >= 10:
-                print("Топ-10 по объему торгов:")
-                for i, (symbol, volume) in enumerate(symbol_volumes[:10], 1):
-                    volume_millions = volume / 1_000_000  # Конвертируем в миллионы USDT
-                    print(f"  {i:2d}. {symbol:12s} - {volume_millions:8.1f}M USDT")
+            if self.verbose_logs:
+                print(f"Отфильтровано: {len(symbols)} → {len(top_symbols)} символов (топ-{top_count} по объему торгов)")
+                
+                # Показываем примеры топ-10 для информации
+                if len(symbol_volumes) >= 10:
+                    print("Топ-10 по объему торгов:")
+                    for i, (symbol, volume) in enumerate(symbol_volumes[:10], 1):
+                        volume_millions = volume / 1_000_000  # Конвертируем в миллионы USDT
+                        print(f"  {i:2d}. {symbol:12s} - {volume_millions:8.1f}M USDT")
             
             return top_symbols
             
@@ -139,7 +144,8 @@ class BinanceBigOrdersScanner:
             tickers_list = self.make_request_with_retry(url, timeout=10)
             tickers_dict = {ticker['symbol']: ticker for ticker in tickers_list}
             
-            print(f"Получены ticker данные для {len(tickers_dict)} символов одним запросом")
+            if self.verbose_logs:
+                print(f"Получены ticker данные для {len(tickers_dict)} символов одним запросом")
             return tickers_dict
             
         except Exception as e:
@@ -348,6 +354,180 @@ class BinanceBigOrdersScanner:
         
         return big_orders
     
+    # ======== НОВЫЕ МЕТОДЫ ДЛЯ ПЕРСИСТЕНТНОГО ХРАНЕНИЯ ========
+    
+    def create_order_key(self, order: Dict) -> str:
+        """Создаем уникальный ключ для ордера"""
+        return f"{order['symbol']}-{order['type']}-{order['price']:.8f}-{order['quantity']:.8f}"
+    
+    def orders_are_same(self, order1: Dict, order2: Dict) -> bool:
+        """Проверяем, один ли это ордер (с учетом небольших изменений цены/количества)"""
+        if (order1['symbol'] != order2['symbol'] or 
+            order1['type'] != order2['type']):
+            return False
+        
+        # Проверяем разницу в цене и количестве (в процентах)
+        price_diff = abs(order1['price'] - order2['price']) / order1['price'] if order1['price'] > 0 else 1
+        quantity_diff = abs(order1['quantity'] - order2['quantity']) / order1['quantity'] if order1['quantity'] > 0 else 1
+        
+        # Ордеры считаются одинаковыми, если разница меньше допустимой
+        return price_diff <= self.price_tolerance and quantity_diff <= self.price_tolerance
+    
+    def load_existing_data(self) -> List[Dict]:
+        """Загружаем существующие данные"""
+        if not os.path.exists(self.data_file):
+            return []
+        
+        try:
+            with open(self.data_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Ошибка чтения существующих данных: {e}")
+            return []
+    
+    def merge_orders_data(self, new_symbol_data: Dict) -> Dict:
+        """Объединяем новые данные с существующими без потери истории"""
+        existing_data = self.load_existing_data()
+        current_time = datetime.now().isoformat()
+        
+        # Находим существующий символ
+        existing_symbol_data = None
+        for data in existing_data:
+            if data['symbol'] == new_symbol_data['symbol']:
+                existing_symbol_data = data
+                break
+        
+        if not existing_symbol_data:
+            # Новый символ - помечаем все ордера как новые
+            for order in new_symbol_data['orders']:
+                order['first_seen'] = current_time
+                order['last_seen'] = current_time  
+                order['is_persistent'] = False
+                order['scan_count'] = 1
+                order['lifetime_minutes'] = 0
+            return new_symbol_data
+        
+        # Обрабатываем существующие и новые ордера
+        merged_orders = []
+        new_orders = new_symbol_data['orders']
+        existing_orders = existing_symbol_data.get('orders', [])
+        
+        # Помечаем какие ордера найдены в новом скане
+        found_existing_orders = set()
+        persistent_orders_log = []  # НОВОЕ: для логирования персистентных ордеров
+        
+        # Обрабатываем новые ордера
+        for new_order in new_orders:
+            matched_existing = None
+            
+            # Ищем соответствующий существующий ордер
+            for i, existing_order in enumerate(existing_orders):
+                if self.orders_are_same(new_order, existing_order):
+                    matched_existing = existing_order
+                    found_existing_orders.add(i)
+                    break
+            
+            if matched_existing:
+                # Существующий ордер - обновляем
+                updated_order = new_order.copy()
+                updated_order['first_seen'] = matched_existing.get('first_seen', current_time)
+                updated_order['last_seen'] = current_time
+                updated_order['is_persistent'] = True
+                updated_order['scan_count'] = matched_existing.get('scan_count', 0) + 1
+                
+                # Вычисляем время жизни
+                try:
+                    first_time = datetime.fromisoformat(matched_existing.get('first_seen', current_time))
+                    current_time_dt = datetime.fromisoformat(current_time)
+                    lifetime_minutes = (current_time_dt - first_time).total_seconds() / 60
+                    updated_order['lifetime_minutes'] = round(lifetime_minutes, 1)
+                    
+                    # НОВОЕ: Логирование персистентных ордеров
+                    order_info = f"{updated_order['type']} ${updated_order['usd_value']:,.0f} @ {updated_order['price']:.4f}"
+                    persistent_orders_log.append(f"  🔄 {order_info} (живет {lifetime_minutes:.1f}мин, скан #{updated_order['scan_count']})")
+                    
+                except:
+                    updated_order['lifetime_minutes'] = 0
+                
+                merged_orders.append(updated_order)
+            else:
+                # Новый ордер
+                new_order['first_seen'] = current_time
+                new_order['last_seen'] = current_time
+                new_order['is_persistent'] = False  
+                new_order['scan_count'] = 1
+                new_order['lifetime_minutes'] = 0
+                merged_orders.append(new_order)
+        
+        # Логирование персистентных ордеров
+        if persistent_orders_log:
+            print(f"🔍 {new_symbol_data['symbol']}: Найдены персистентные ордера:")
+            for log_line in persistent_orders_log:
+                print(log_line)
+        
+        # НЕ добавляем ордера, которые исчезли (они автоматически удаляются)
+        
+        new_symbol_data['orders'] = merged_orders
+        return new_symbol_data
+    
+    def update_data_file(self, updated_symbol_data: Dict):
+        """Обновляем данные конкретного символа в файле"""
+        all_data = self.load_existing_data()
+        
+        # Находим и заменяем данные символа
+        symbol_found = False
+        for i, data in enumerate(all_data):
+            if data['symbol'] == updated_symbol_data['symbol']:
+                all_data[i] = updated_symbol_data
+                symbol_found = True
+                break
+        
+        # Если символа не было, добавляем
+        if not symbol_found:
+            all_data.append(updated_symbol_data)
+        
+        # Сохраняем
+        try:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(all_data, f, ensure_ascii=False, indent=2)
+            
+            # Компактное логирование обновлений
+            new_orders = [o for o in updated_symbol_data['orders'] if not o.get('is_persistent', False)]
+            persistent_orders = [o for o in updated_symbol_data['orders'] if o.get('is_persistent', False)]
+            
+            if new_orders or self.verbose_logs:
+                status_parts = []
+                if new_orders:
+                    status_parts.append(f"{len(new_orders)} новых")
+                if persistent_orders:
+                    status_parts.append(f"{len(persistent_orders)} перс.")
+                
+                status = ", ".join(status_parts) if status_parts else "0 ордеров"
+                symbol_log = f"✅ {updated_symbol_data['symbol']}: {status}"
+                
+                # Только в вербозном режиме или если есть новые ордера
+                if new_orders or self.verbose_logs:
+                    print(symbol_log)
+            
+        except Exception as e:
+            print(f"Ошибка сохранения: {e}")
+    
+    def remove_symbol_from_data(self, symbol: str):
+        """Удаляем символ из данных (если больше нет больших ордеров)"""
+        all_data = self.load_existing_data()
+        original_count = len(all_data)
+        all_data = [data for data in all_data if data['symbol'] != symbol]
+        
+        if len(all_data) < original_count:
+            try:
+                with open(self.data_file, 'w', encoding='utf-8') as f:
+                    json.dump(all_data, f, ensure_ascii=False, indent=2)
+                print(f"  Удален {symbol} (нет больших ордеров)")
+            except Exception as e:
+                print(f"Ошибка удаления символа: {e}")
+    
+    # ======== КОНЕЦ НОВЫХ МЕТОДОВ ========
+    
     def clear_data_file(self):
         """Очищаем файл с данными"""
         try:
@@ -357,8 +537,43 @@ class BinanceBigOrdersScanner:
         except Exception as e:
             print(f"Ошибка очистки файла: {e}")
     
+    def save_symbol_data_persistent(self, symbol: str, symbol_data: Dict, symbol_metrics: Dict, big_orders: List[Dict]):
+        """Сохраняем данные с сохранением истории (НОВАЯ ЛОГИКА)"""
+        if not big_orders:
+            # Даже если нет больших ордеров, нужно обновить существующие данные
+            # (удалить ордера, которых больше нет)
+            self.remove_symbol_from_data(symbol)
+            return
+        
+        # Создаем объект символа
+        symbol_object = {
+            'symbol': symbol,
+            'timestamp': datetime.now().isoformat(),
+            'current_price': symbol_data.get('current_price', 0),
+            'volatility_1h': symbol_metrics.get('volatility_1h', 0),
+            'volume_ratio': symbol_metrics.get('volume_ratio', 0), 
+            'price_movement_5min': symbol_metrics.get('price_movement_5min', 0),
+            'is_round_level': symbol_metrics.get('is_round_level', False),
+            'orders_count': len(big_orders),
+            'orders': big_orders
+        }
+        
+        # Объединяем с существующими данными
+        merged_symbol_data = self.merge_orders_data(symbol_object)
+        
+        # Сохраняем обновленные данные
+        self.update_data_file(merged_symbol_data)
+    
     def save_symbol_data(self, symbol: str, symbol_data: Dict, symbol_metrics: Dict, big_orders: List[Dict]):
-        """Сохраняем данные символа в JSON формате"""
+        """Обертка для совместимости - выбираем старую или новую логику"""
+        if self.persistent_mode:
+            self.save_symbol_data_persistent(symbol, symbol_data, symbol_metrics, big_orders)
+        else:
+            # Старая логика (для обратной совместимости)
+            self.save_symbol_data_old_logic(symbol, symbol_data, symbol_metrics, big_orders)
+    
+    def save_symbol_data_old_logic(self, symbol: str, symbol_data: Dict, symbol_metrics: Dict, big_orders: List[Dict]):
+        """СТАРАЯ логика сохранения (для обратной совместимости)"""
         if not big_orders:
             return
         
@@ -416,7 +631,8 @@ class BinanceBigOrdersScanner:
         """Обрабатываем один символ с индексом (и batch ticker данными)"""
         symbol, index, total, ticker_data = symbol_task  # Теперь тупл 4 элемента
         try:
-            print(f"Сканирование {symbol} ({index}/{total})")
+            if self.verbose_logs:
+                print(f"Сканирование {symbol} ({index}/{total})")
             
             # Получаем полные данные символа (используя batch ticker)
             symbol_data = self.get_symbol_data(symbol, ticker_data)
@@ -435,7 +651,10 @@ class BinanceBigOrdersScanner:
             big_orders = self.find_big_orders(symbol, order_book, symbol_data, symbol_metrics)
             
             if big_orders:
-                print(f"  Найдено {len(big_orders)} больших ордеров в {symbol} (топ-3 с каждой стороны)")
+                # Логирование новых ордеров (компактно)
+                total_usd = sum(order['usd_value'] for order in big_orders)
+                print(f"💰 {symbol}: {len(big_orders)} ордеров (${total_usd:,.0f})")
+                
                 self.save_symbol_data(symbol, symbol_data, symbol_metrics, big_orders)
                 return len(big_orders)
             
@@ -446,11 +665,23 @@ class BinanceBigOrdersScanner:
             return 0
     
     def scan_all_symbols(self):
-        """Основной метод сканирования топ-250 символов с BATCH оптимизацией и фильтром по капитализации"""
-        print(f"Запуск сканирования с BATCH оптимизацией + фильтр по капитализации ({self.max_workers} воркеров)...")
+        """Основной метод сканирования топ-250 символов с BATCH оптимизацией и ПЕРСИСТЕНТНЫМ ХРАНЕНИЕМ"""
+        mode_text = "ПЕРСИСТЕНТНЫМ" if self.persistent_mode else "ОБЫЧНЫМ"
         
-        # Очищаем старые данные при каждом запуске
-        self.clear_data_file()
+        if self.first_run:
+            print(f"🚀 Начало сканирования в {mode_text} режиме ({self.max_workers} воркеров)")
+            
+            # Очищаем файл ТОЛЬКО при первом запуске
+            if not self.persistent_mode:
+                self.clear_data_file()
+                print("🗑️ Очищены старые данные (обычный режим)")
+            else:
+                print("💾 Персистентный режим: сохраняем существующие данные")
+            
+            self.first_run = False  # Отмечаем, что первый запуск завершен
+        else:
+            # Последующие итерации - компактное логирование
+            print(f"🔄 Новая итерация...")
         
         # Получаем список активных символов
         symbols = self.get_active_symbols()
@@ -459,14 +690,16 @@ class BinanceBigOrdersScanner:
             return
         
         # КЛЮЧЕВОЕ: Получаем ВСЕ ticker данные одним запросом!
-        print("Получаем ВСЕ ticker данные одним batch запросом...")
+        if self.verbose_logs:
+            print("Получаем ВСЕ ticker данные одним batch запросом...")
         all_tickers = self.get_all_tickers_batch()
         if not all_tickers:
             print("Ошибка получения batch ticker! Отменяем сканирование.")
             return
         
         # НОВОЕ: Фильтруем только топ-N символов по объему торгов (капитализации)
-        print(f"Фильтруем топ-{self.top_symbols_count} символов по объему торгов...")
+        if self.verbose_logs:
+            print(f"Фильтруем топ-{self.top_symbols_count} символов по объему торгов...")
         filtered_symbols = self.filter_top_symbols_by_volume(symbols, all_tickers, top_count=self.top_symbols_count)
         
         total_big_orders = 0
@@ -478,15 +711,16 @@ class BinanceBigOrdersScanner:
             if ticker_data:  # Обрабатываем только символы с ticker данными
                 symbol_tasks.append((symbol, i+1, len(filtered_symbols), ticker_data))
         
-        print(f"Обрабатываем {len(symbol_tasks)} символов...")
+        print(f"🚀 Обрабатываем {len(symbol_tasks)} символов...")
         
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             results = executor.map(self.process_symbol_with_index, symbol_tasks)
             for result in results:
                 total_big_orders += result
         
-        print(f"\nСканирование завершено! Всего найдено {total_big_orders} больших ордеров")
-        print(f"Данные сохранены в файл: {self.data_file}")
+        print(f"\n🏁 Сканирование завершено! Всего найдено {total_big_orders} больших ордеров")
+        if self.verbose_logs:
+            print(f"Данные сохранены в файл: {self.data_file}")
     
     def continuous_scan(self):
         """Непрерывное сканирование без задержки"""
@@ -511,33 +745,61 @@ def main():
     """Главная функция"""
     scanner = BinanceBigOrdersScanner()
     
-    print("=== СКРИННЕР БОЛЬШИХ ЗАЯВОК BINANCE FUTURES (ОПТИМИЗИРОВАН ПО КАПИТАЛИЗАЦИИ) ===")
+    print("=== СКРИННЕР БОЛЬШИХ ЗАЯВОК BINANCE FUTURES (С ПЕРСИСТЕНТНЫМ ХРАНЕНИЕМ) ===")
     print("Минимальный размер ордера: $500,000")
     print("Исключенные символы: BTC, ETH")
     print("Ограничения: макс 3+3 ордера/символ, макс 10% от цены")
-    print("Отслеживание повторов со счетчиком")
+    print(f"🔥 НОВОЕ: Персистентное хранение данных - режим {'ВКЛЮЧЕН' if scanner.persistent_mode else 'ВЫКЛЮЧЕН'}")
+    if scanner.persistent_mode:
+        print("✅ Отслеживание времени жизни ордеров (first_seen, last_seen, lifetime_minutes)")
+        print("✅ Различение новых и существующих ордеров (is_persistent, scan_count)")
+        print("✅ Сохранение данных между итерациями (ордера не стираются)")
+        print("✅ Автоматическое удаление исчезнувших ордеров")
+        print("🔍 Логирование персистентных ордеров с временем жизни")
     print(f"Фильтрация: только топ-{scanner.top_symbols_count} пар по объему торгов (самые капитализированные)")
     print("Дополнительные метрики: volatility_1h, volume_ratio, rank_in_side, size_vs_average")
     print("Вывод: JSON объекты с массивом ордеров")
     print(f"Параллельные запросы: {scanner.max_workers} воркеров")
     print(f"ОПТИМИЗАЦИИ: BATCH ticker запросы (1 вместо 471+), топ-{scanner.top_symbols_count} по капитализации, стакан 500")
     print("НАДЕЖНОСТЬ: Retry логика для 429/5xx ошибок, экспоненциальные задержки")
-    print("=" * 50)
+    print(f"🔍 Режим логов: {'ВЕРБОЗНЫЙ' if scanner.verbose_logs else 'КОМПАКТНЫЙ'}")
+    print("=" * 80)
     
     try:
-        # Выбор режима работы
+        # Выбор режима работы  
         print("\nВыберите режим работы:")
-        print("1 - Одноразовое сканирование")
-        print("2 - Непрерывное сканирование (без пауз)")
+        print("1 - Одноразовое сканирование (персистентный режим)")
+        print("2 - Непрерывное сканирование (персистентный режим)")
+        print("3 - Одноразовое сканирование (старый режим - очистка данных)")
+        print("4 - Переключить режим персистентности")
+        print("5 - Переключить вербозные логи")
         
-        choice = input("Введите номер (1 или 2): ").strip()
+        choice = input("Введите номер (1-5): ").strip()
         
         if choice == "1":
             scanner.scan_all_symbols()
         elif choice == "2":
             scanner.continuous_scan()
+        elif choice == "3":
+            print("\n🔄 Переключение в старый режим (с очисткой данных)...")
+            scanner.persistent_mode = False
+            scanner.first_run = True  # Сбрасываем флаг для очистки
+            scanner.scan_all_symbols()
+        elif choice == "4":
+            current_mode = "ПЕРСИСТЕНТНЫЙ" if scanner.persistent_mode else "ОБЫЧНЫЙ"
+            new_mode = "ОБЫЧНЫЙ" if scanner.persistent_mode else "ПЕРСИСТЕНТНЫЙ"
+            print(f"\n🔄 Переключение: {current_mode} → {new_mode}")
+            scanner.persistent_mode = not scanner.persistent_mode
+            scanner.first_run = True  # Сбрасываем флаг при смене режима
+            scanner.scan_all_symbols()
+        elif choice == "5":
+            current_verbose = "ВЕРБОЗНЫЕ" if scanner.verbose_logs else "КОМПАКТНЫЕ"
+            new_verbose = "КОМПАКТНЫЕ" if scanner.verbose_logs else "ВЕРБОЗНЫЕ"
+            print(f"\n🔊 Переключение логов: {current_verbose} → {new_verbose}")
+            scanner.verbose_logs = not scanner.verbose_logs
+            scanner.scan_all_symbols()
         else:
-            print("Неверный выбор. Запуск одноразового сканирования...")
+            print("Неверный выбор. Запуск одноразового сканирования в персистентном режиме...")
             scanner.scan_all_symbols()
             
     except KeyboardInterrupt:
