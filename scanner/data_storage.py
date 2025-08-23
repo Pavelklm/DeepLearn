@@ -48,8 +48,15 @@ class DataStorage:
     def clear_data_file(self):
         """Очищаем файл с данными"""
         try:
+            # Очищаем основной файл данных
             if os.path.exists(self.data_file):
                 os.remove(self.data_file)
+            
+            # Очищаем файл со списком символов
+            whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
+            if os.path.exists(whale_file):
+                os.remove(whale_file)
+            
             print("Старые данные очищены")
         except Exception as e:
             print(f"Ошибка очистки файла: {e}")
@@ -135,7 +142,18 @@ class DataStorage:
             for log_line in persistent_orders_log:
                 print(log_line)
         
-        # НЕ добавляем ордера, которые исчезли (они автоматически удаляются)
+        # Логируем удаленные ордера (которые были, но исчезли)
+        removed_orders = []
+        for i, existing_order in enumerate(existing_orders):
+            if i not in found_existing_orders:  # Ордер исчез
+                removed_orders.append(existing_order)
+        
+        if removed_orders and self.verbose_logs:
+            print(f"🗑️ {new_symbol_data.symbol}: Удалены исчезнувшие ордера:")
+            for order in removed_orders:
+                print(f"  ❌ {order.type} ${order.usd_value:,.0f} @ {order.price:.4f} (жил {order.lifetime_minutes:.1f}мин)")
+        
+        # Устанавливаем обновленные ордера (исчезнувшие ордера автоматически не включены)
         new_symbol_data.orders = merged_orders
         return new_symbol_data
     
@@ -189,16 +207,42 @@ class DataStorage:
         if len(all_data) < original_count:
             try:
                 self.save_all_data(all_data)
-                print(f"  Удален {symbol} (нет больших ордеров)")
+                # Логирование убрано - оно теперь в save_symbol_data_persistent
+                
+                # СРАЗУ удаляем из списка китов (если вызов не из save_symbol_data_persistent)
+                # Проверяем stack trace чтобы избежать двойного вызова
+                import traceback
+                stack = traceback.extract_stack()
+                if not any('save_symbol_data_persistent' in str(frame) for frame in stack):
+                    self.remove_symbol_from_whale_list(symbol)
+                    
             except Exception as e:
                 print(f"Ошибка удаления символа: {e}")
     
     def save_symbol_data_persistent(self, symbol_result: SymbolResult):
         """Сохраняем данные с сохранением истории (персистентный режим)"""
         if not symbol_result.orders:
-            # Даже если нет больших ордеров, нужно обновить существующие данные
-            # (удалить ордера, которых больше нет)
+            # Проверяем, были ли у этого символа ордера раньше
+            existing_data = self.load_existing_data()
+            existing_symbol = None
+            for data in existing_data:
+                if data['symbol'] == symbol_result.symbol:
+                    existing_symbol = data
+                    break
+            
+            if existing_symbol and existing_symbol.get('orders'):
+                # У символа были ордера, но теперь их нет - логируем удаление
+                if self.verbose_logs:
+                    print(f"🗑️ {symbol_result.symbol}: Все ордера исчезли, удаляем символ")
+                    for order_dict in existing_symbol['orders']:
+                        order = OrderData.from_dict(order_dict)
+                        print(f"  ❌ {order.type} ${order.usd_value:,.0f} @ {order.price:.4f} (жил {order.lifetime_minutes:.1f}мин)")
+            
+            # Удаляем символ из данных
             self.remove_symbol_from_data(symbol_result.symbol)
+            
+            # СРАЗУ удаляем из списка китов
+            self.remove_symbol_from_whale_list(symbol_result.symbol)
             return
         
         # Объединяем с существующими данными
@@ -206,6 +250,9 @@ class DataStorage:
         
         # Сохраняем обновленные данные
         self.update_symbol_data(merged_symbol_data)
+        
+        # СРАЗУ добавляем в список китов
+        self.add_symbol_to_whale_list(merged_symbol_data)
     
     def save_symbol_data_simple(self, symbol_result: SymbolResult):
         """Простое сохранение без персистентности (для обратной совместимости)"""
@@ -224,3 +271,81 @@ class DataStorage:
             
         except Exception as e:
             print(f"Ошибка сохранения данных: {e}")
+    
+    def add_symbol_to_whale_list(self, symbol_result: SymbolResult):
+        """Добавляем/обновляем символ в списке китов СРАЗУ"""
+        try:
+            whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
+            
+            # Загружаем существующий список
+            whale_symbols = []
+            if os.path.exists(whale_file):
+                with open(whale_file, 'r', encoding='utf-8') as f:
+                    whale_symbols = json.load(f)
+            
+            # Считаем метрики символа
+            total_volume = sum(order.usd_value for order in symbol_result.orders)
+            largest_whale = max(order.usd_value for order in symbol_result.orders)
+            
+            # НОВОЕ: Находим самый живучий ордер
+            longest_lifetime = max(order.lifetime_minutes for order in symbol_result.orders) if symbol_result.orders else 0
+            
+            new_symbol_data = {
+                "symbol": symbol_result.symbol,
+                "orders_count": len(symbol_result.orders),
+                "total_volume": round(total_volume, 2),
+                "largest_whale": round(largest_whale, 2),
+                "longest_order_lifetime": round(longest_lifetime, 1),
+                "last_updated": symbol_result.timestamp,
+                "current_price": symbol_result.current_price,
+                "volatility_1h": symbol_result.volatility_1h
+            }
+            
+            # Ищем существующий символ
+            symbol_found = False
+            for i, whale_symbol in enumerate(whale_symbols):
+                if whale_symbol['symbol'] == symbol_result.symbol:
+                    whale_symbols[i] = new_symbol_data  # Обновляем
+                    symbol_found = True
+                    break
+            
+            if not symbol_found:
+                whale_symbols.append(new_symbol_data)  # Добавляем новый
+                lifetime_info = f", стойкий {longest_lifetime:.1f}мин" if longest_lifetime > 0 else ""
+                print(f"📚 {symbol_result.symbol}: Добавлен в список китов (${total_volume:,.0f}{lifetime_info})")
+            
+            # Сортируем по объему (самые крупные сверху)
+            whale_symbols.sort(key=lambda x: x['total_volume'], reverse=True)
+            
+            # Сохраняем обновленный список
+            with open(whale_file, 'w', encoding='utf-8') as f:
+                json.dump(whale_symbols, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            print(f"Ошибка добавления символа в список китов: {e}")
+    
+    def remove_symbol_from_whale_list(self, symbol: str):
+        """Удаляем символ из списка китов СРАЗУ"""
+        try:
+            whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
+            
+            if not os.path.exists(whale_file):
+                return  # Файл не существует
+            
+            # Загружаем существующий список
+            with open(whale_file, 'r', encoding='utf-8') as f:
+                whale_symbols = json.load(f)
+            
+            # Удаляем символ
+            original_count = len(whale_symbols)
+            whale_symbols = [ws for ws in whale_symbols if ws['symbol'] != symbol]
+            
+            if len(whale_symbols) < original_count:
+                print(f"🗑️ {symbol}: Удален из списка китов")
+                
+                # Сохраняем обновленный список
+                with open(whale_file, 'w', encoding='utf-8') as f:
+                    json.dump(whale_symbols, f, ensure_ascii=False, indent=2)
+                    
+        except Exception as e:
+            print(f"Ошибка удаления символа из списка китов: {e}")

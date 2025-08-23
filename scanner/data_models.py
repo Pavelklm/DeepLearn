@@ -23,6 +23,9 @@ class OrderData:
     rank_in_side: int
     timestamp: str
     
+    # Средний размер ордера в стакане для контекста
+    average_order_size: float
+    
     # Поля для персистентности
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None

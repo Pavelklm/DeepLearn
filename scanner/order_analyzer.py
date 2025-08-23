@@ -18,7 +18,7 @@ class OrderAnalyzer:
     """Анализатор ордеров для поиска больших заявок"""
     
     def __init__(self):
-        self.min_order_size_usd = ScannerConfig.MIN_ORDER_SIZE_USD
+        self.whale_multiplier = ScannerConfig.WHALE_MULTIPLIER
         self.max_orders_per_side = ScannerConfig.MAX_ORDERS_PER_SIDE
         self.volatility_multiplier = ScannerConfig.VOLATILITY_MULTIPLIER
     
@@ -35,18 +35,19 @@ class OrderAnalyzer:
         # Динамический радиус на основе волатильности
         dynamic_distance = symbol_metrics.volatility_1h * self.volatility_multiplier
         
+        # Рассчитываем адаптивный порог
+        avg_order_size = self._calculate_average_order_size(order_book)
+        adaptive_threshold = avg_order_size * self.whale_multiplier
+        
         # Временные списки для сортировки
         ask_orders = []
         bid_orders = []
         
-        # Собираем все ордера для расчета среднего размера
-        avg_order_size = self._calculate_average_order_size(order_book)
-        
         # Обрабатываем аски (продажи)
-        ask_orders = self._process_asks(order_book, current_price, avg_order_size, symbol, dynamic_distance)
+        ask_orders = self._process_asks(order_book, current_price, adaptive_threshold, avg_order_size, symbol, dynamic_distance)
         
         # Обрабатываем биды (покупки)
-        bid_orders = self._process_bids(order_book, current_price, avg_order_size, symbol, dynamic_distance)
+        bid_orders = self._process_bids(order_book, current_price, adaptive_threshold, avg_order_size, symbol, dynamic_distance)
         
         # Сортируем и берем топ-N самых больших ордеров с каждой стороны
         # ASK: сортируем по размеру (самые большие сначала)
@@ -74,7 +75,7 @@ class OrderAnalyzer:
         
         return sum(all_order_sizes) / len(all_order_sizes) if all_order_sizes else 1
     
-    def _process_asks(self, order_book: Dict, current_price: float, 
+    def _process_asks(self, order_book: Dict, current_price: float, adaptive_threshold: float,
                      avg_order_size: float, symbol: str, dynamic_distance: float) -> List[OrderData]:
         """Обрабатываем ордера на продажу (аски)"""
         ask_orders = []
@@ -84,7 +85,7 @@ class OrderAnalyzer:
             quantity = float(ask[1])
             usd_value = price * quantity
             
-            if usd_value >= self.min_order_size_usd:
+            if usd_value >= adaptive_threshold:
                 distance_percent = ((price - current_price) / current_price) * 100
                 
                 # Пропускаем ордера дальше динамического радиуса
@@ -95,7 +96,7 @@ class OrderAnalyzer:
                 orders_around_count = self._count_orders_around_price(
                     order_book.get('asks', []), price)
                 
-                order = OrderData(
+                order_data = OrderData(
                     symbol=symbol,
                     type='ASK',
                     price=price,
@@ -105,13 +106,14 @@ class OrderAnalyzer:
                     size_vs_average=usd_value / avg_order_size if avg_order_size > 0 else 1,
                     orders_around_price=orders_around_count,
                     rank_in_side=0,  # Будет установлен позже
-                    timestamp=datetime.now().isoformat()
+                    timestamp=datetime.now().isoformat(),
+                    average_order_size=avg_order_size
                 )
-                ask_orders.append(order)
+                ask_orders.append(order_data)
         
         return ask_orders
     
-    def _process_bids(self, order_book: Dict, current_price: float, 
+    def _process_bids(self, order_book: Dict, current_price: float, adaptive_threshold: float,
                      avg_order_size: float, symbol: str, dynamic_distance: float) -> List[OrderData]:
         """Обрабатываем ордера на покупку (биды)"""
         bid_orders = []
@@ -121,7 +123,7 @@ class OrderAnalyzer:
             quantity = float(bid[1])
             usd_value = price * quantity
             
-            if usd_value >= self.min_order_size_usd:
+            if usd_value >= adaptive_threshold:
                 distance_percent = ((price - current_price) / current_price) * 100
                 
                 # Пропускаем ордера дальше динамического радиуса
@@ -132,7 +134,7 @@ class OrderAnalyzer:
                 orders_around_count = self._count_orders_around_price(
                     order_book.get('bids', []), price)
                 
-                order = OrderData(
+                order_data = OrderData(
                     symbol=symbol,
                     type='BID',
                     price=price,
@@ -142,9 +144,10 @@ class OrderAnalyzer:
                     size_vs_average=usd_value / avg_order_size if avg_order_size > 0 else 1,
                     orders_around_price=orders_around_count,
                     rank_in_side=0,  # Будет установлен позже
-                    timestamp=datetime.now().isoformat()
+                    timestamp=datetime.now().isoformat(),
+                    average_order_size=avg_order_size
                 )
-                bid_orders.append(order)
+                bid_orders.append(order_data)
         
         return bid_orders
     

@@ -4,7 +4,7 @@
 Управление символами и их фильтрация
 """
 
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 try:
     from api_client import BinanceAPIClient
@@ -94,7 +94,7 @@ class SymbolManager:
             print("Используем все символы без фильтрации")
             return symbols
     
-    def get_filtered_symbols(self) -> tuple[List[str], Dict[str, Dict]]:
+    def get_filtered_symbols(self) -> Tuple[List[str], Dict[str, Dict]]:
         """Получаем отфильтрованный список символов и их ticker данные"""
         # Получаем все активные символы
         symbols = self.get_active_symbols()

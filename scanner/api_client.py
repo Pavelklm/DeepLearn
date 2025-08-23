@@ -19,6 +19,8 @@ class BinanceAPIClient:
     
     def __init__(self, base_url: str = None):
         self.base_url = base_url or ScannerConfig.BASE_URL
+        self.timeout = ScannerConfig.REQUEST_TIMEOUT
+        self.max_retries = ScannerConfig.MAX_RETRIES
         
     def make_request_with_retry(self, url: str, params: Optional[Dict] = None, 
                               max_retries: int = None, timeout: int = None) -> Dict:
