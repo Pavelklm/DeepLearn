@@ -49,17 +49,18 @@ class PoolManager:
         self._cached_hot_symbols: Set[str] = set()
         self._last_hot_update: Optional[datetime] = None
         
-    def get_hot_pool_symbols(self) -> Set[str]:
+    def get_hot_pool_symbols(self, force_refresh: bool = False) -> Set[str]:
         """Получаем символы из горячего пула (whale_symbols.json)"""
         try:
             # Кэшируем на короткое время для производительности
             now = datetime.now()
-            if (self._last_hot_update and 
+            if (not force_refresh and self._last_hot_update and 
                 (now - self._last_hot_update).total_seconds() < 5):
                 return self._cached_hot_symbols
             
             if not os.path.exists(self.whale_file):
                 self._cached_hot_symbols = set()
+                self._last_hot_update = now
                 return self._cached_hot_symbols
             
             with open(self.whale_file, 'r', encoding='utf-8') as f:
@@ -118,7 +119,8 @@ class PoolManager:
         Проверяем изменения в горячем пуле и возвращаем символы, 
         которые нужно добавить в пул наблюдения
         """
-        current_hot = self.get_hot_pool_symbols()
+        # ПРИНУДИТЕЛЬНО перечитываем файл
+        current_hot = self.get_hot_pool_symbols(force_refresh=True)
         previous_hot = getattr(self, '_previous_hot_symbols', set())
         
         # Символы, которые исчезли из горячего пула
@@ -130,6 +132,12 @@ class PoolManager:
         # Удаляем вернувшиеся символы из пула наблюдения
         for symbol in returned_symbols:
             self.remove_from_watch_pool(symbol)
+        
+        # Логирование изменений
+        if lost_symbols:
+            print(f"📋 Исчезли из горячего пула: {list(lost_symbols)}")
+        if returned_symbols:
+            print(f"🔥 Вернулись в горячий пул: {list(returned_symbols)}")
         
         # Сохраняем текущее состояние для следующей проверки
         self._previous_hot_symbols = current_hot.copy()

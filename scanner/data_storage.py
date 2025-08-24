@@ -6,6 +6,7 @@
 
 import json
 import os
+import threading
 from typing import List, Dict
 from datetime import datetime
 
@@ -19,6 +20,9 @@ except ImportError:
 
 class DataStorage:
     """Класс для работы с персистентным хранением данных"""
+    
+    # Общий lock для всех экземпляров DataStorage
+    _whale_file_lock = threading.Lock()
     
     def __init__(self, data_file: str = None):
         self.data_file = data_file or ScannerConfig.DATA_FILE
@@ -251,8 +255,13 @@ class DataStorage:
         # Сохраняем обновленные данные
         self.update_symbol_data(merged_symbol_data)
         
-        # СРАЗУ добавляем в список китов
-        self.add_symbol_to_whale_list(merged_symbol_data)
+        # Приоритет записи - определяем по вызову
+        import traceback
+        stack = [str(frame) for frame in traceback.extract_stack()]
+        is_from_hot_pool = any('hot_pool_worker' in frame for frame in stack)
+        
+        # Добавляем в список китов
+        self.add_symbol_to_whale_list(merged_symbol_data, force_write=is_from_hot_pool)
     
     def save_symbol_data_simple(self, symbol_result: SymbolResult):
         """Простое сохранение без персистентности (для обратной совместимости)"""
@@ -272,80 +281,121 @@ class DataStorage:
         except Exception as e:
             print(f"Ошибка сохранения данных: {e}")
     
-    def add_symbol_to_whale_list(self, symbol_result: SymbolResult):
-        """Добавляем/обновляем символ в списке китов СРАЗУ"""
-        try:
-            whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
-            
-            # Загружаем существующий список
-            whale_symbols = []
-            if os.path.exists(whale_file):
-                with open(whale_file, 'r', encoding='utf-8') as f:
-                    whale_symbols = json.load(f)
-            
-            # Считаем метрики символа
-            total_volume = sum(order.usd_value for order in symbol_result.orders)
-            largest_whale = max(order.usd_value for order in symbol_result.orders)
-            
-            # НОВОЕ: Находим самый живучий ордер
-            longest_lifetime = max(order.lifetime_minutes for order in symbol_result.orders) if symbol_result.orders else 0
-            
-            new_symbol_data = {
-                "symbol": symbol_result.symbol,
-                "orders_count": len(symbol_result.orders),
-                "total_volume": round(total_volume, 2),
-                "largest_whale": round(largest_whale, 2),
-                "longest_order_lifetime": round(longest_lifetime, 1),
-                "last_updated": symbol_result.timestamp,
-                "current_price": symbol_result.current_price,
-                "volatility_1h": symbol_result.volatility_1h
-            }
-            
-            # Ищем существующий символ
-            symbol_found = False
-            for i, whale_symbol in enumerate(whale_symbols):
-                if whale_symbol['symbol'] == symbol_result.symbol:
-                    whale_symbols[i] = new_symbol_data  # Обновляем
-                    symbol_found = True
-                    break
-            
-            if not symbol_found:
-                whale_symbols.append(new_symbol_data)  # Добавляем новый
-                lifetime_info = f", стойкий {longest_lifetime:.1f}мин" if longest_lifetime > 0 else ""
-                print(f"📚 {symbol_result.symbol}: Добавлен в список китов (${total_volume:,.0f}{lifetime_info})")
-            
-            # Сортируем по объему (самые крупные сверху)
-            whale_symbols.sort(key=lambda x: x['total_volume'], reverse=True)
-            
-            # Сохраняем обновленный список
-            with open(whale_file, 'w', encoding='utf-8') as f:
-                json.dump(whale_symbols, f, ensure_ascii=False, indent=2)
+    def add_symbol_to_whale_list(self, symbol_result: SymbolResult, force_write: bool = False):
+        """
+        Добавляем/обновляем символ в списке китов
+        force_write=True - приоритет записи (горячий пул)
+        force_write=False - проверяем дубли (общий пул)
+        """
+        with self._whale_file_lock:
+            try:
+                whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
                 
-        except Exception as e:
-            print(f"Ошибка добавления символа в список китов: {e}")
+                # Загружаем существующие данные
+                whale_symbols = []
+                if os.path.exists(whale_file):
+                    try:
+                        with open(whale_file, 'r', encoding='utf-8') as f:
+                            content = f.read().strip()
+                            if content:
+                                whale_symbols = json.loads(content)
+                    except (json.JSONDecodeError, Exception) as e:
+                        print(f"⚠️ Поврежденный whale_symbols.json: {e}")
+                        print("🔧 Создаем новый...")
+                        whale_symbols = []
+                
+                # ПРОВЕРКА ДУБЛЕЙ для общего пула
+                if not force_write:
+                    # Проверяем, есть ли уже этот символ
+                    for existing_symbol in whale_symbols:
+                        if existing_symbol['symbol'] == symbol_result.symbol:
+                            # print(f"⚠️ {symbol_result.symbol}: Уже в горячем пуле, пропускаем")
+                            return  # ПРОПУСКАЕМ ДУБЛИ!
+                
+                # Считаем метрики
+                total_volume = sum(order.usd_value for order in symbol_result.orders)
+                largest_whale = max(order.usd_value for order in symbol_result.orders)
+                longest_lifetime = max(order.lifetime_minutes for order in symbol_result.orders) if symbol_result.orders else 0
+                
+                new_symbol_data = {
+                    "symbol": symbol_result.symbol,
+                    "orders_count": len(symbol_result.orders),
+                    "total_volume": round(total_volume, 2),
+                    "largest_whale": round(largest_whale, 2),
+                    "longest_order_lifetime": round(longest_lifetime, 1),
+                    "last_updated": symbol_result.timestamp,
+                    "current_price": symbol_result.current_price,
+                    "volatility_1h": symbol_result.volatility_1h
+                }
+                
+                # Обновляем или добавляем
+                symbol_found = False
+                for i, whale_symbol in enumerate(whale_symbols):
+                    if whale_symbol['symbol'] == symbol_result.symbol:
+                        whale_symbols[i] = new_symbol_data
+                        symbol_found = True
+                        break
+                
+                if not symbol_found:
+                    whale_symbols.append(new_symbol_data)
+                    pool_type = "🔥 ГОРЯЧИЙ" if force_write else "📊 ОБЩИЙ"
+                    print(f"📋 {symbol_result.symbol}: Добавлен в киты {pool_type} (${total_volume:,.0f})")
+                
+                # Сортируем и сохраняем
+                whale_symbols.sort(key=lambda x: x['total_volume'], reverse=True)
+                
+                # Атомарная запись
+                temp_file = whale_file + ".tmp"
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(whale_symbols, f, ensure_ascii=False, indent=2)
+                
+                # Атомарное перемещение
+                if os.name == 'nt':  # Windows
+                    if os.path.exists(whale_file):
+                        os.remove(whale_file)
+                    os.rename(temp_file, whale_file)
+                else:  # Unix/Linux
+                    os.rename(temp_file, whale_file)
+                    
+            except Exception as e:
+                print(f"❌ Ошибка записи whale_symbols: {e}")
     
     def remove_symbol_from_whale_list(self, symbol: str):
-        """Удаляем символ из списка китов СРАЗУ"""
-        try:
-            whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
-            
-            if not os.path.exists(whale_file):
-                return  # Файл не существует
-            
-            # Загружаем существующий список
-            with open(whale_file, 'r', encoding='utf-8') as f:
-                whale_symbols = json.load(f)
-            
-            # Удаляем символ
-            original_count = len(whale_symbols)
-            whale_symbols = [ws for ws in whale_symbols if ws['symbol'] != symbol]
-            
-            if len(whale_symbols) < original_count:
-                print(f"🗑️ {symbol}: Удален из списка китов")
+        """Удаляем символ из списка китов THREAD-SAFE"""
+        with self._whale_file_lock:
+            try:
+                whale_file = ScannerConfig.WHALE_SYMBOLS_FILE
                 
-                # Сохраняем обновленный список
-                with open(whale_file, 'w', encoding='utf-8') as f:
-                    json.dump(whale_symbols, f, ensure_ascii=False, indent=2)
+                if not os.path.exists(whale_file):
+                    return  # Файл не существует
+                
+                # Загружаем существующий список
+                try:
+                    with open(whale_file, 'r', encoding='utf-8') as f:
+                        whale_symbols = json.load(f)
+                except (json.JSONDecodeError, Exception) as e:
+                    print(f"⚠️ Поврежденный whale_symbols.json при удалении: {e}")
+                    return
+                
+                # Удаляем символ
+                original_count = len(whale_symbols)
+                whale_symbols = [ws for ws in whale_symbols if ws['symbol'] != symbol]
+                
+                if len(whale_symbols) < original_count:
+                    print(f"🗑️ {symbol}: Удален из списка китов")
                     
-        except Exception as e:
-            print(f"Ошибка удаления символа из списка китов: {e}")
+                    # Атомарное сохранение
+                    temp_file = whale_file + ".tmp"
+                    with open(temp_file, 'w', encoding='utf-8') as f:
+                        json.dump(whale_symbols, f, ensure_ascii=False, indent=2)
+                    
+                    # Атомарное перемещение
+                    if os.name == 'nt':  # Windows
+                        if os.path.exists(whale_file):
+                            os.remove(whale_file)
+                        os.rename(temp_file, whale_file)
+                    else:  # Unix/Linux
+                        os.rename(temp_file, whale_file)
+                        
+            except Exception as e:
+                print(f"❌ Ошибка удаления из whale_symbols: {e}")
