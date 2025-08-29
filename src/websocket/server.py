@@ -78,12 +78,10 @@ class WebSocketServer:
             self.is_running = True
             self.start_time = datetime.now(timezone.utc)
             
-            self.logger.info("WebSocket server started",
-                           host=self.host, port=self.port)
+            self.logger.info(f"WebSocket server started on {self.host}:{self.port}")
             
         except Exception as e:
-            self.logger.error("Failed to start WebSocket server", 
-                            host=self.host, port=self.port, error=str(e))
+            self.logger.error(f"Failed to start WebSocket server on {self.host}:{self.port}: {str(e)}")
             raise
     
     async def stop(self):
@@ -129,8 +127,7 @@ class WebSocketServer:
             query_params = {k: v[0] for k, v in parse_qs(parsed_url.query).items()}
             headers = dict(websocket.request_headers)
             
-            self.logger.info("New WebSocket connection attempt",
-                           path=path, client_ip=client_ip)
+            self.logger.info(f"New WebSocket connection attempt: {path} from {client_ip}")
             
             # Аутентификация
             auth_result = self.authenticator.authenticate(
@@ -142,8 +139,7 @@ class WebSocketServer:
             
             if auth_result.get("access_level") == "denied":
                 reason = auth_result.get("reason", "Access denied")
-                self.logger.warning("Connection denied", 
-                                  client_ip=client_ip, reason=reason)
+                self.logger.warning(f"Connection denied from {client_ip}: {reason}")
                 
                 await websocket.close(code=1008, reason=reason)
                 self.failed_connections += 1
@@ -166,17 +162,15 @@ class WebSocketServer:
             
             await websocket.send(json.dumps(welcome_message))
             
-            self.logger.info("WebSocket connection established",
-                           access_level=access_level, client_ip=client_ip)
+            self.logger.info(f"WebSocket connection established: {access_level} from {client_ip}")
             
             # Обрабатываем входящие сообщения
             await self._handle_messages(websocket, access_level)
             
         except websockets.exceptions.ConnectionClosed:
-            self.logger.info("WebSocket connection closed", client_ip=client_ip)
+            self.logger.info(f"WebSocket connection closed from {client_ip}")
         except Exception as e:
-            self.logger.error("Error handling WebSocket connection",
-                            client_ip=client_ip, error=str(e))
+            self.logger.error(f"Error handling WebSocket connection from {client_ip}: {str(e)}")
             self.failed_connections += 1
         finally:
             # Удаляем соединение из broadcaster
@@ -198,8 +192,7 @@ class WebSocketServer:
                     await websocket.send(json.dumps(error_response))
                     
                 except Exception as e:
-                    self.logger.error("Error processing client message",
-                                    access_level=access_level, error=str(e))
+                    self.logger.error(f"Error processing client message ({access_level}): {str(e)}")
                     
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -283,7 +276,7 @@ class WebSocketServer:
                 self.data_queue.task_done()
                 
             except Exception as e:
-                self.logger.error("Error processing data queue", error=str(e))
+                self.logger.error(f"Error processing data queue: {str(e)}")
     
     async def send_hot_pool_data(self, hot_pool_data: Dict):
         """

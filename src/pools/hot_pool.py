@@ -120,8 +120,7 @@ class HotPoolWorker(BaseWorker):
             }
             
         except Exception as e:
-            self.logger.error("Error scanning symbol in hot pool", 
-                             symbol=symbol, error=str(e))
+            self.logger.error(f"Error scanning symbol in hot pool {symbol}: {str(e)}")
             return None
     
     async def _analyze_hot_order(self, hot_order: HotOrder, orderbook: dict, 
@@ -209,8 +208,7 @@ class HotPoolWorker(BaseWorker):
             }
             
         except Exception as e:
-            self.logger.error("Error analyzing hot order", 
-                             order_hash=hot_order.order_hash, error=str(e))
+            self.logger.error(f"Error analyzing hot order {hot_order.order_hash}: {str(e)}")
             return None
     
     def _calculate_market_temperature(self, volatility: float) -> float:
@@ -366,7 +364,7 @@ class HotPool:
         # Финальное сохранение
         await self._save_to_file()
         
-        self.logger.info("Hot pool stopped", total_orders=len(self.hot_orders))
+        self.logger.info(f"Hot pool stopped with {len(self.hot_orders)} total orders")
     
     async def add_order_from_observer(self, tracked_order, update_data: dict):
         """Добавить ордер из пула наблюдателя"""
@@ -397,14 +395,10 @@ class HotPool:
             # Обновляем воркеров
             self._update_worker_assignments()
             
-            self.logger.info("Added order to hot pool", 
-                           order_hash=hot_order.order_hash,
-                           symbol=hot_order.symbol,
-                           lifetime_seconds=hot_order.lifetime_seconds)
+            self.logger.info(f"Added order to hot pool: {hot_order.order_hash} ({hot_order.symbol}) lifetime={hot_order.lifetime_seconds}s")
             
         except Exception as e:
-            self.logger.error("Error adding order to hot pool", 
-                             tracked_order=tracked_order, error=str(e))
+            self.logger.error(f"Error adding order to hot pool: {tracked_order} - {str(e)}")
     
     async def handle_updates(self, scan_result: dict):
         """Обработка обновлений от воркеров"""
@@ -437,7 +431,7 @@ class HotPool:
                     await self._broadcast_hot_pool_update()
                     
         except Exception as e:
-            self.logger.error("Error handling updates", error=str(e))
+            self.logger.error(f"Error handling updates: {str(e)}")
     
     async def _update_hot_order(self, order_hash: str, updates: dict):
         """Обновление горячего ордера"""
@@ -449,14 +443,10 @@ class HotPool:
                 if hasattr(hot_order, field):
                     setattr(hot_order, field, value)
             
-            self.logger.debug("Updated hot order", 
-                            order_hash=order_hash,
-                            weight=updates.get("weights", {}).get("recommended", 0),
-                            category=updates.get("categories", {}).get("recommended", "basic"))
+            self.logger.debug(f"Updated hot order {order_hash}: weight={updates.get('weights', {}).get('recommended', 0):.3f} category={updates.get('categories', {}).get('recommended', 'basic')}")
             
         except Exception as e:
-            self.logger.error("Error updating hot order", 
-                             order_hash=order_hash, error=str(e))
+            self.logger.error(f"Error updating hot order {order_hash}: {str(e)}")
     
     def _remove_hot_order(self, order_hash: str):
         """Удаление горячего ордера"""
@@ -476,15 +466,13 @@ class HotPool:
                 if not self.symbol_orders[symbol]:
                     del self.symbol_orders[symbol]
             
-            self.logger.debug("Removed hot order", 
-                            order_hash=order_hash, symbol=symbol)
+            self.logger.debug(f"Removed hot order {order_hash} from {symbol}")
             
             # Обновляем воркеров
             self._update_worker_assignments()
             
         except Exception as e:
-            self.logger.error("Error removing hot order", 
-                             order_hash=order_hash, error=str(e))
+            self.logger.error(f"Error removing hot order {order_hash}: {str(e)}")
     
     def _update_worker_assignments(self):
         """Обновление назначений воркеров"""
@@ -511,7 +499,7 @@ class HotPool:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self.logger.error("Error in save loop", error=str(e))
+                self.logger.error(f"Error in save loop: {str(e)}")
     
     def _should_save(self) -> bool:
         """Определить нужно ли сохранять"""
@@ -554,12 +542,10 @@ class HotPool:
             temp_file.replace(self.output_file)
             self.last_save_time = datetime.now()
             
-            self.logger.debug("Saved hot pool data", 
-                            orders_count=len(self.hot_orders),
-                            file_size=self.output_file.stat().st_size)
+            self.logger.debug(f"Saved hot pool data: {len(self.hot_orders)} orders, file size: {self.output_file.stat().st_size} bytes")
             
         except Exception as e:
-            self.logger.error("Error saving to file", error=str(e))
+            self.logger.error(f"Error saving to file: {str(e)}")
     
     async def _broadcast_hot_pool_update(self):
         """Отправка обновлений горячего пула через WebSocket"""
@@ -609,7 +595,7 @@ class HotPool:
             await self.websocket_server.send_hot_pool_data(hot_pool_data)
             
         except Exception as e:
-            self.logger.error("Error broadcasting hot pool update", error=str(e))
+            self.logger.error(f"Error broadcasting hot pool update: {str(e)}")
     
     async def _check_alert_conditions(self, order_hash: str, updates: dict):
         """Проверка условий для алертов"""
@@ -651,8 +637,7 @@ class HotPool:
                 await manager.check_conditions(context)
                 
         except Exception as e:
-            self.logger.error("Error checking alert conditions", 
-                            order_hash=order_hash, error=str(e))
+            self.logger.error(f"Error checking alert conditions for {order_hash}: {str(e)}")
     
     def get_symbol_orders(self, symbol: str) -> List[HotOrder]:
         """Получить горячие ордера для символа"""

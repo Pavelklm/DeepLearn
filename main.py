@@ -14,7 +14,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from src.scanner_orchestrator import ScannerOrchestrator
-from src.websocket.server import CryptoScannerWebSocket  
 from config.main_config import *
 from src.utils.logger import setup_logger
 
@@ -28,98 +27,55 @@ class CryptoScannerApp:
         self.orchestrator = None
         self.websocket_server = None
         self.running = False
+        self.logger = logger
     
     async def start(self):
-    self.logger.info("Запуск криптовалютного сканнера больших ордеров")
-
-    try:
-        # создаём оркестратор без dev_mode
-        self.orchestrator = ScannerOrchestrator(
-            exchanges=self.args.exchanges
-        )
-
-        # если выбран тестовый режим — запускаем тестовый метод
-        if self.args.primary_scan_only:
-            self.logger.info("Запущен режим тестового сканирования (primary-scan-only)")
-            await self.orchestrator.run_test_mode()
-        else:
-            # иначе — обычный продакшен-режим
-            await self.orchestrator.start()
-
-    except Exception as e:
-        self.logger.error(f"Критическая ошибка при запуске: {e}")
-        await self.stop()
-        raise
-        
         """Запуск всей системы"""
-        logger.info("Запуск криптовалютного сканнера больших ордеров")
+        self.logger.info("🚀 Запуск криптовалютного сканнера больших ордеров")
         
         try:
             # 1. Инициализация оркестратора (управление пулами)
             self.orchestrator = ScannerOrchestrator(
                 exchanges=self.args.exchanges,
-                dev_mode=self.args.dev
+                testnet=self.args.dev
             )
             
-            # 2. Запуск WebSocket сервера
-            if not self.args.primary_scan_only:
-                self.websocket_server = CryptoScannerWebSocket(WEBSOCKET_CONFIG)
-                await self.websocket_server.start()
-            
-            # 3. Запуск сканирования
+            # 2. Запуск сканирования (WebSocket управляется внутри оркестратора)
             await self.orchestrator.start()
             
             self.running = True
-            logger.info("Система успешно запущена")
+            self.logger.info("✅ Система успешно запущена")
             
-            # 4. Основной цикл работы
+            # 3. Основной цикл работы
             if self.args.primary_scan_only:
-                await self.orchestrator.run_primary_scan_only()
+                await self.orchestrator.run_test_mode()
             else:
-                await self._main_loop()
+                await self.orchestrator.run_continuous_mode()
                 
         except Exception as e:
-            logger.error(f"Критическая ошибка при запуске: {e}")
+            self.logger.error(f"❌ Критическая ошибка при запуске: {e}")
             await self.stop()
             raise
     
     async def _main_loop(self):
-        """Основной цикл работы системы"""
-        while self.running:
-            try:
-                # Получение статистики пулов
-                stats = await self.orchestrator.get_stats()
-                
-                # Отправка статистики через WebSocket
-                if self.websocket_server:
-                    await self.websocket_server.broadcast_stats(stats)
-                
-                # Логирование ключевых метрик
-                logger.info(f"Статистика пулов: {stats}")
-                
-                await asyncio.sleep(LOGGING_CONFIG["stats_interval"])
-                
-            except Exception as e:
-                logger.error(f"Ошибка в основном цикле: {e}")
-                await asyncio.sleep(5)
+        """Основной цикл работы системы (не используется - заменен на orchestrator.run_continuous_mode())"""
+        # Этот метод больше не нужен - логика перенесена в ScannerOrchestrator.run_continuous_mode()
+        pass
     
     async def stop(self):
         """Graceful shutdown"""
-        logger.info("Остановка системы...")
+        self.logger.info("🛑 Остановка системы...")
         self.running = False
         
         if self.orchestrator:
             await self.orchestrator.stop()
             
-        if self.websocket_server:
-            await self.websocket_server.stop()
-            
-        logger.info("Система остановлена")
+        self.logger.info("✅ Система остановлена")
 
 def setup_signal_handlers(app):
     """Настройка обработчиков сигналов для graceful shutdown"""
     def signal_handler(signum, frame):
-        logger.info(f"Получен сигнал {signum}")
+        logger.info(f"🔔 Получен сигнал {signum}")
         asyncio.create_task(app.stop())
     
     signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
@@ -170,7 +126,7 @@ async def main():
     # Проверка статуса
     if args.status:
         # TODO: Реализовать проверку статуса через IPC/файл
-        print("Проверка статуса системы...")
+        print("📊 Проверка статуса системы...")
         return
     
     # Создание и запуск приложения
@@ -180,9 +136,9 @@ async def main():
     try:
         await app.start()
     except KeyboardInterrupt:
-        logger.info("Получен сигнал прерывания")
+        logger.info("👋 Получен сигнал прерывания")
     except Exception as e:
-        logger.error(f"Фатальная ошибка: {e}")
+        logger.error(f"💥 Фатальная ошибка: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

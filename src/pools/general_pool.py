@@ -57,7 +57,7 @@ class GeneralPoolWorker(BaseWorker):
                 await asyncio.sleep(self.scan_interval)
                 
             except Exception as e:
-                self.logger.error(f"Error in general pool worker {self.worker_id}", error=str(e))
+                self.logger.error(f"Error in general pool worker {self.worker_id}: {str(e)}")
                 await asyncio.sleep(5)  # Задержка при ошибке
     
     async def scan_symbol(self, symbol: str) -> Optional[Dict]:
@@ -95,7 +95,7 @@ class GeneralPoolWorker(BaseWorker):
             return None
             
         except Exception as e:
-            self.logger.error(f"Error scanning symbol {symbol}", error=str(e))
+            self.logger.error(f"Error scanning symbol {symbol}: {str(e)}")
             return None
     
     def _find_large_orders_in_side(self, symbol: str, orders: List, current_price: float, side_type: str) -> List[Dict]:
@@ -193,12 +193,10 @@ class GeneralPool:
             # Запуск воркера
             asyncio.create_task(self.worker.start())
             
-            self.logger.info("General pool started",
-                           total_symbols=len(self.all_symbols),
-                           excluded_symbols=len(self.excluded_symbols))
+            self.logger.info(f"General pool started - symbols: {len(self.all_symbols)}, excluded: {len(self.excluded_symbols)}")
             
         except Exception as e:
-            self.logger.error("Error starting general pool", error=str(e))
+            self.logger.error(f"Error starting general pool: {str(e)}")
             self.is_running = False
             raise
     
@@ -212,9 +210,7 @@ class GeneralPool:
         if self.worker:
             await self.worker.stop()
         
-        self.logger.info("General pool stopped",
-                        symbols_scanned=self.symbols_scanned_count,
-                        large_orders_found=self.large_orders_found)
+        self.logger.info(f"General pool stopped - scanned: {self.symbols_scanned_count}, found: {self.large_orders_found}")
     
     async def _initialize_symbol_list(self):
         """Инициализация списка всех доступных символов"""
@@ -242,7 +238,7 @@ class GeneralPool:
             self.logger.info(f"Initialized symbol list with {len(self.all_symbols)} symbols")
             
         except Exception as e:
-            self.logger.error("Error initializing symbol list", error=str(e))
+            self.logger.error(f"Error initializing symbol list: {str(e)}")
             raise
     
     def add_excluded_symbol(self, symbol: str):
@@ -297,7 +293,7 @@ class GeneralPool:
                 self.add_excluded_symbol(symbol)
             
         except Exception as e:
-            self.logger.error("Error handling large orders", error=str(e))
+            self.logger.error(f"Error handling large orders: {str(e)}")
     
     def _is_near_round_level(self, price: float, threshold: float = 0.02) -> bool:
         """Проверка близости к психологическому уровню"""

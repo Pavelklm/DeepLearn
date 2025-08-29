@@ -48,8 +48,7 @@ class AdaptiveWorkerManager:
         # Создаем минимальное количество воркеров
         await self.scale_to(self.min_workers)
         
-        self.logger.info("Adaptive worker manager started", 
-                        initial_workers=len(self.workers))
+        self.logger.info(f"Adaptive worker manager started with {len(self.workers)} initial workers")
     
     async def stop(self):
         """Остановка всех воркеров"""
@@ -80,10 +79,7 @@ class AdaptiveWorkerManager:
         current_workers = len(self.workers)
         
         if target_workers != current_workers:
-            self.logger.info("Scaling workers", 
-                           current=current_workers, 
-                           target=target_workers,
-                           load=current_load_count)
+            self.logger.info(f"Scaling workers: {current_workers} -> {target_workers} (load: {current_load_count})")
             
             await self.scale_to(target_workers)
     
@@ -145,7 +141,7 @@ class AdaptiveWorkerManager:
         
         self.workers.extend(new_workers)
         
-        self.logger.info("Added workers", count=count, total=len(self.workers))
+        self.logger.info(f"Added {count} workers (total: {len(self.workers)})")
     
     async def _remove_workers(self, count: int):
         """
@@ -165,7 +161,7 @@ class AdaptiveWorkerManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         
-        self.logger.info("Removed workers", count=len(workers_to_remove), total=len(self.workers))
+        self.logger.info(f"Removed {len(workers_to_remove)} workers (total: {len(self.workers)})")
     
     def distribute_work(self, work_items: List):
         """
@@ -234,11 +230,10 @@ class AdaptiveWorkerManager:
         if not failed_workers:
             return
         
-        self.logger.warning("Restarting failed workers", count=len(failed_workers))
+        self.logger.warning(f"Restarting {len(failed_workers)} failed workers")
         
         for worker in failed_workers:
             try:
                 await worker.start()
             except Exception as e:
-                self.logger.error("Failed to restart worker", 
-                                worker_id=worker.worker_id, error=str(e))
+                self.logger.error(f"Failed to restart worker {worker.worker_id}: {str(e)}")

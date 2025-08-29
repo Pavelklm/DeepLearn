@@ -49,7 +49,7 @@ class BinanceAPI(BaseExchange):
         self._pairs_cache_time = 0
         self._exchange_info = None
         
-        self.logger.info("Binance API initialized", testnet=testnet)
+        self.logger.info(f"Binance API initialized (testnet={testnet})")
     
     async def connect(self) -> bool:
         """
@@ -80,7 +80,7 @@ class BinanceAPI(BaseExchange):
             return True
             
         except Exception as e:
-            self.logger.error("Failed to connect to Binance API", error=str(e))
+            self.logger.error(f"Failed to connect to Binance API: {str(e)}")
             self.is_connected = False
             return False
     
@@ -149,7 +149,7 @@ class BinanceAPI(BaseExchange):
             if self._apply_symbol_filters(symbol):
                 pairs.append(symbol)
         
-        self.logger.info("Loaded futures pairs", total_pairs=len(pairs))
+        self.logger.info(f"Loaded futures pairs: {len(pairs)}")
         return pairs
     
     def _apply_symbol_filters(self, symbol: str) -> bool:
@@ -407,9 +407,7 @@ class BinanceAPI(BaseExchange):
         valid_symbols.sort(key=lambda x: x[1], reverse=True)
         top_symbols = [symbol for symbol, volume in valid_symbols[:limit]]
         
-        self.logger.info("Selected top volume symbols", 
-                        total_filtered=len(valid_symbols), 
-                        selected=len(top_symbols))
+        self.logger.info(f"Selected top volume symbols - filtered: {len(valid_symbols)}, selected: {len(top_symbols)}")
         
         return top_symbols
     

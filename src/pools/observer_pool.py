@@ -120,8 +120,7 @@ class ObserverWorker(BaseWorker):
             }
             
         except Exception as e:
-            self.logger.error("Error scanning symbol in observer", 
-                             symbol=symbol, error=str(e))
+            self.logger.error(f"Error scanning symbol in observer {symbol}: {str(e)}")
             return None
     
     def _analyze_tracked_order(self, tracked_order: TrackedOrder, 
@@ -192,8 +191,7 @@ class ObserverWorker(BaseWorker):
                 }
                 
         except Exception as e:
-            self.logger.error("Error analyzing tracked order", 
-                             order_hash=tracked_order.order_hash, error=str(e))
+            self.logger.error(f"Error analyzing tracked order {tracked_order.order_hash}: {str(e)}")
             return None
     
     async def process_scan_results(self, results: List[Dict]):
@@ -254,10 +252,7 @@ class ObserverPool:
         self.is_running = False
         await self.worker_manager.stop()
         
-        self.logger.info("Observer pool stopped", 
-                        total_orders_tracked=len(self.tracked_orders),
-                        moved_to_hot=self.orders_moved_to_hot,
-                        died=self.orders_died)
+        self.logger.info(f"Observer pool stopped - tracked: {len(self.tracked_orders)}, moved to hot: {self.orders_moved_to_hot}, died: {self.orders_died}")
     
     def add_order_from_primary_scan(self, order_data: dict):
         """Добавить ордер из первичного сканирования"""
@@ -293,14 +288,10 @@ class ObserverPool:
             # Обновляем работу воркеров
             self._update_worker_assignments()
             
-            self.logger.debug("Added order to observer pool", 
-                            order_hash=order_hash,
-                            symbol=tracked_order.symbol,
-                            usd_value=tracked_order.usd_value)
+            self.logger.debug(f"Added order to observer pool: {order_hash} ({tracked_order.symbol}) ${tracked_order.usd_value:,.0f}")
             
         except Exception as e:
-            self.logger.error("Error adding order to observer pool", 
-                             order_data=order_data, error=str(e))
+            self.logger.error(f"Error adding order to observer pool {order_data}: {str(e)}")
     
     async def handle_order_update(self, update: dict):
         """Обработка обновления ордера"""
@@ -328,8 +319,7 @@ class ObserverPool:
                 self._remove_order(tracked_order, update_type)
                 
         except Exception as e:
-            self.logger.error("Error handling order update", 
-                             update=update, error=str(e))
+            self.logger.error(f"Error handling order update {update}: {str(e)}")
     
     async def _move_order_to_hot_pool(self, tracked_order: TrackedOrder, update: dict):
         """Перевод ордера в горячий пул"""
@@ -339,10 +329,7 @@ class ObserverPool:
                 await self.hot_pool.add_order_from_observer(tracked_order, update)
             else:
                 # Горячий пул не создан - просто логируем
-                self.logger.info("Order ready for hot pool (hot pool not initialized)", 
-                               order_hash=tracked_order.order_hash,
-                               lifetime_seconds=update["lifetime_seconds"],
-                               symbol=tracked_order.symbol)
+                self.logger.info(f"Order ready for hot pool (not initialized): {tracked_order.order_hash} ({tracked_order.symbol}) lifetime={update['lifetime_seconds']}s")
             
             self.orders_moved_to_hot += 1
             
@@ -350,8 +337,7 @@ class ObserverPool:
             self._remove_order(tracked_order, "moved_to_hot_pool")
             
         except Exception as e:
-            self.logger.error("Error moving order to hot pool", 
-                             order_hash=tracked_order.order_hash, error=str(e))
+            self.logger.error(f"Error moving order to hot pool {tracked_order.order_hash}: {str(e)}")
     
     def _remove_order(self, tracked_order: TrackedOrder, reason: str):
         """Удаление ордера из пула наблюдателя"""
@@ -374,15 +360,13 @@ class ObserverPool:
             if reason in ["order_died", "order_disappeared"]:
                 self.orders_died += 1
             
-            self.logger.debug("Removed order from observer pool", 
-                            order_hash=order_hash, reason=reason, symbol=symbol)
+            self.logger.debug(f"Removed order from observer pool: {order_hash} ({symbol}) reason: {reason}")
             
             # Обновляем назначения воркеров
             self._update_worker_assignments()
             
         except Exception as e:
-            self.logger.error("Error removing order", 
-                             order_hash=tracked_order.order_hash, error=str(e))
+            self.logger.error(f"Error removing order {tracked_order.order_hash}: {str(e)}")
     
     def _update_worker_assignments(self):
         """Обновление назначений символов воркерам"""
@@ -414,13 +398,13 @@ class ObserverPool:
                         del self.symbol_orders[symbol]
                     del self.cleanup_scan_counts[symbol]
                     
-                    self.logger.debug("Cleaned up empty symbol", symbol=symbol)
+                    self.logger.debug(f"Cleaned up empty symbol: {symbol}")
                 
                 if symbols_to_remove:
                     self._update_worker_assignments()
                 
             except Exception as e:
-                self.logger.error("Error in cleanup task", error=str(e))
+                self.logger.error(f"Error in cleanup task: {str(e)}")
             
             await asyncio.sleep(self.config.get("scan_interval", 1))
     

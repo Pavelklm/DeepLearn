@@ -143,15 +143,14 @@ class BaseExchange(ABC):
         if not success:
             self.error_count += 1
             
-        self.logger.info(
-            "API call",
-            endpoint=endpoint,
-            symbol=symbol,
-            success=success,
-            response_time=response_time,
-            total_requests=self.request_count,
-            error_count=self.error_count
-        )
+        status = "OK" if success else "ERROR"
+        details = [endpoint]
+        if symbol:
+            details.append(symbol)
+        if response_time:
+            details.append(f"{response_time:.3f}s")
+            
+        self.logger.info(f"API {status}: {' '.join(details)} (total: {self.request_count}, errors: {self.error_count})")
     
     def get_stats(self) -> dict:
         """
@@ -218,19 +217,10 @@ class BaseExchange(ABC):
                 last_exception = e
                 
                 if attempt < max_retries:
-                    self.logger.warning(
-                        "API call failed, retrying",
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        error=str(e)
-                    )
+                    self.logger.warning(f"API call failed (attempt {attempt + 1}/{max_retries}), retrying: {str(e)}")
                     await asyncio.sleep(delay * (2 ** attempt))  # Экспоненциальная задержка
                 else:
-                    self.logger.error(
-                        "API call failed after all retries",
-                        max_retries=max_retries,
-                        error=str(e)
-                    )
+                    self.logger.error(f"API call failed after {max_retries} retries: {str(e)}")
         
         raise last_exception
     

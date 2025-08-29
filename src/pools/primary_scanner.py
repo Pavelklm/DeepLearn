@@ -83,10 +83,7 @@ class PrimaryScanner:
             }
             self.observer_pool.add_order_from_primary_scan(order_data)
         
-        self.logger.debug("Added large order", 
-                         symbol=order.symbol,
-                         usd_value=order.usd_value,
-                         order_hash=order.order_hash)
+        self.logger.debug(f"Added large order: {order.symbol} ${order.usd_value:,.0f} #{order.order_hash}")
     
     def _get_scan_results(self) -> Dict:
         """Получение результатов сканирования (по спецификации - без адаптивных категорий)"""
@@ -207,13 +204,13 @@ class PrimaryScanner:
                     await asyncio.sleep(self.config.get("min_request_delay", 0.1))
                     
                 except Exception as e:
-                    self.logger.error(f"Error scanning symbol {symbol}", error=str(e))
+                    self.logger.error(f"Error scanning symbol {symbol}: {str(e)}")
                     continue
             
             return self._get_scan_results()
             
         except Exception as e:
-            self.logger.error("Error in test scan", error=str(e))
+            self.logger.error(f"Error in test scan: {str(e)}")
             raise
         finally:
             self.scan_end_time = datetime.now(timezone.utc)
@@ -320,7 +317,7 @@ class PrimaryScanner:
             return self._get_scan_results()
             
         except Exception as e:
-            self.logger.error("Error in full scan", error=str(e))
+            self.logger.error(f"Error in full scan: {str(e)}")
             raise
         finally:
             self.scan_end_time = datetime.now(timezone.utc)
@@ -369,7 +366,7 @@ class PrimaryScanner:
                 await asyncio.sleep(self.config.get("min_request_delay", 0.1))
                 
             except Exception as e:
-                self.logger.error(f"Worker {worker_id} error scanning {symbol}", error=str(e))
+                self.logger.error(f"Worker {worker_id} error scanning {symbol}: {str(e)}")
                 continue
         
         self.logger.debug(f"Worker {worker_id} completed")

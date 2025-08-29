@@ -63,13 +63,13 @@ class ExchangeFactory:
         exchange_name = exchange_name.lower()
         
         if exchange_name not in SUPPORTED_EXCHANGES:
-            self.logger.error("Unsupported exchange", exchange=exchange_name)
+            self.logger.error(f"Unsupported exchange: {exchange_name}")
             return None
         
         config = SUPPORTED_EXCHANGES[exchange_name]
         
         if not config["enabled"]:
-            self.logger.warning("Exchange disabled in config", exchange=exchange_name)
+            self.logger.warning(f"Exchange disabled in config: {exchange_name}")
             return None
         
         try:
@@ -82,11 +82,11 @@ class ExchangeFactory:
                 return None
             
             else:
-                self.logger.error("Unknown exchange implementation", exchange=exchange_name)
+                self.logger.error(f"Unknown exchange implementation: {exchange_name}")
                 return None
                 
         except Exception as e:
-            self.logger.error("Failed to create exchange", exchange=exchange_name, error=str(e))
+            self.logger.error(f"Failed to create exchange {exchange_name}: {str(e)}")
             return None
     
     def _create_binance_exchange(self, testnet: bool = False) -> Optional[BinanceAPI]:
@@ -136,8 +136,7 @@ class ExchangeFactory:
                     if exchange.is_connected:
                         return exchange
                 except Exception as e:
-                    self.logger.warning("Failed to reconnect cached exchange", 
-                                       exchange=exchange_name, error=str(e))
+                    self.logger.warning(f"Failed to reconnect cached exchange {exchange_name}: {str(e)}")
         
         # Создаем новый экземпляр
         exchange = self.create_exchange(exchange_name, testnet)
@@ -149,16 +148,14 @@ class ExchangeFactory:
             connected = await exchange.connect()
             if connected:
                 self.exchanges[cache_key] = exchange
-                self.logger.info("Created and connected new exchange", 
-                               exchange=exchange_name, testnet=testnet)
+                self.logger.info(f"Created and connected new exchange: {exchange_name} (testnet={testnet})")
                 return exchange
             else:
-                self.logger.error("Failed to connect new exchange", exchange=exchange_name)
+                self.logger.error(f"Failed to connect new exchange: {exchange_name}")
                 return None
                 
         except Exception as e:
-            self.logger.error("Exception while connecting new exchange", 
-                             exchange=exchange_name, error=str(e))
+            self.logger.error(f"Exception while connecting new exchange {exchange_name}: {str(e)}")
             return None
     
     async def disconnect_all(self):
@@ -167,8 +164,7 @@ class ExchangeFactory:
             try:
                 await exchange.disconnect()
             except Exception as e:
-                self.logger.error("Error disconnecting exchange", 
-                                 exchange=exchange.name, error=str(e))
+                self.logger.error(f"Error disconnecting exchange {exchange.name}: {str(e)}")
         
         self.exchanges.clear()
         self.logger.info("All exchanges disconnected")

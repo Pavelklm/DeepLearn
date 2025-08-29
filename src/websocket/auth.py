@@ -36,18 +36,18 @@ class WebSocketAuthenticator:
         vip_file = Path(WEBSOCKET_CONFIG.get("vip_keys_file", "config/vip_keys.txt"))
         
         if not vip_file.exists():
-            self.logger.warning("VIP keys file not found", file=str(vip_file))
+            self.logger.warning(f"VIP keys file not found: {str(vip_file)}")
             return set()
         
         try:
             with open(vip_file, 'r', encoding='utf-8') as f:
                 keys = {line.strip() for line in f.readlines() if line.strip()}
             
-            self.logger.info("Loaded VIP keys", count=len(keys))
+            self.logger.info(f"Loaded {len(keys)} VIP keys")
             return keys
             
         except Exception as e:
-            self.logger.error("Error loading VIP keys", file=str(vip_file), error=str(e))
+            self.logger.error(f"Error loading VIP keys from {str(vip_file)}: {str(e)}")
             return set()
     
     def authenticate(self, path: str, query_params: Dict[str, str], headers: Dict[str, str], 
@@ -79,8 +79,7 @@ class WebSocketAuthenticator:
                 return {"access_level": "denied", "reason": "Invalid endpoint"}
                 
         except Exception as e:
-            self.logger.error("Authentication error", 
-                             path=path, client_ip=client_ip, error=str(e))
+            self.logger.error(f"Authentication error for {path} from {client_ip}: {str(e)}")
             return {"access_level": "denied", "reason": "Authentication failed"}
     
     def _authenticate_private(self, query_params: Dict[str, str]) -> Dict[str, any]:
@@ -159,7 +158,7 @@ class WebSocketAuthenticator:
         
         # Проверяем лимит
         if len(self.rate_limits[client_ip]) >= burst_size:
-            self.logger.warning("Rate limit exceeded", client_ip=client_ip)
+            self.logger.warning(f"Rate limit exceeded for {client_ip}")
             return False
         
         # Добавляем текущий запрос
@@ -185,12 +184,12 @@ class WebSocketAuthenticator:
     def add_vip_key(self, key: str):
         """Добавить VIP ключ во время работы"""
         self.vip_keys.add(key)
-        self.logger.info("VIP key added", key=key[:8] + "...")
+        self.logger.info(f"VIP key added: {key[:8]}...")
     
     def remove_vip_key(self, key: str):
         """Удалить VIP ключ"""
         self.vip_keys.discard(key)
-        self.logger.info("VIP key removed", key=key[:8] + "...")
+        self.logger.info(f"VIP key removed: {key[:8]}...")
     
     def get_stats(self) -> Dict:
         """Статистика аутентификации"""
