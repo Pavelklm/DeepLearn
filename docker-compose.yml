@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  cryptoscanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryptoscanner-app
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - WEBSOCKET_HOST=0.0.0.0
+      - WEBSOCKET_PORT=8080
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    depends_on:
+      - redis
+    networks:
+      - cryptoscanner-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: cryptoscanner-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cryptoscanner-network
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  nginx:
+    image: nginx:alpine
+    container_name: cryptoscanner-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - cryptoscanner
+    networks:
+      - cryptoscanner-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cryptoscanner-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - cryptoscanner-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+networks:
+  cryptoscanner-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  prometheus_data:

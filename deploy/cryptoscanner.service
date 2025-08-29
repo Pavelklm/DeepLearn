@@ -1,0 +1,53 @@
+[Unit]
+Description=Crypto Large Orders Scanner
+Documentation=https://github.com/yourcompany/cryptoscanner
+After=network.target network-online.target
+Wants=network-online.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=cryptoscanner
+Group=cryptoscanner
+WorkingDirectory=/home/cryptoscanner/Scanner
+Environment=PATH=/home/cryptoscanner/venv/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=ENVIRONMENT=production
+
+# Основная команда запуска
+ExecStart=/home/cryptoscanner/venv/bin/python main.py --exchanges binance
+
+# Перезапуск при падении
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=3
+
+# Процесс и ресурсы
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Лимиты ресурсов
+LimitNOFILE=65536
+MemoryMax=2G
+CPUQuota=400%
+
+# Безопасность
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/home/cryptoscanner/Scanner/data /home/cryptoscanner/Scanner/logs
+PrivateTmp=true
+
+# Логирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cryptoscanner
+
+# PID файл
+RuntimeDirectory=cryptoscanner
+PIDFile=/run/cryptoscanner/cryptoscanner.pid
+
+[Install]
+WantedBy=multi-user.target
