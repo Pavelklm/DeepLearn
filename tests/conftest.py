@@ -3,6 +3,12 @@
 """
 import pytest
 import asyncio
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта в Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 # Настройка asyncio для pytest
 @pytest.fixture(scope="session")

@@ -152,10 +152,10 @@ class TestIntegration:
     def mock_exchange(self):
         return MockExchange()
     
-    @pytest.fixture
-    async def full_system(self, mock_exchange):
+    @pytest.fixture(scope="function")
+    def full_system(self, mock_exchange):
         """Создание полной системы для интеграционного теста"""
-        # Создаем компоненты вручную для полного контроля
+        # Создаем компоненты синхронно - они не требуют async для инициализации
         hot_pool = HotPool(mock_exchange)
         
         observer_pool = ObserverPool(mock_exchange)
@@ -371,7 +371,8 @@ class TestIntegration:
             elif category == "diamond":
                 assert 0.666 <= weight <= 1.0
     
-    def test_статистика_системы(self, full_system):
+    @pytest.mark.asyncio
+    async def test_статистика_системы(self, full_system):
         """Тест получения статистики всей системы"""
         components = full_system
         observer_pool = components["observer_pool"]

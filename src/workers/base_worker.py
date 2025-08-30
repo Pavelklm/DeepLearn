@@ -91,9 +91,7 @@ class BaseWorker(ABC):
             except asyncio.CancelledError:
                 pass
         
-        self.logger.info("Worker stopped", 
-                        total_scans=self.scan_count,
-                        error_count=self.error_count)
+        self.logger.info(f"Worker stopped - scans: {self.scan_count}, errors: {self.error_count}")
     
     async def _main_loop(self):
         """Основной цикл воркера"""
@@ -122,8 +120,7 @@ class BaseWorker(ABC):
                         
                         except Exception as e:
                             self.error_count += 1
-                            self.logger.error("Error scanning symbol", 
-                                            symbol=symbol, error=str(e))
+                            self.logger.error(f"Error scanning symbol {symbol}: {str(e)}")
                     
                     # Обрабатываем результаты
                     if results:
@@ -134,15 +131,11 @@ class BaseWorker(ABC):
                     
                     # Логируем статистику периодически
                     if self.scan_count % 100 == 0:
-                        self.logger.info("Worker statistics",
-                                       scan_count=self.scan_count,
-                                       error_count=self.error_count,
-                                       symbols_processed=len(symbols_to_scan),
-                                       results_found=len(results))
+                        self.logger.info(f"Worker statistics - scans: {self.scan_count}, errors: {self.error_count}, symbols: {len(symbols_to_scan)}, results: {len(results)}")
                 
                 except Exception as e:
                     self.error_count += 1
-                    self.logger.error("Error in main loop", error=str(e))
+                    self.logger.error(f"Error in main loop: {str(e)}")
                 
                 # Применяем интервал сканирования
                 scan_duration = (datetime.now() - scan_start).total_seconds()
@@ -155,7 +148,7 @@ class BaseWorker(ABC):
             self.logger.info("Worker cancelled")
             raise
         except Exception as e:
-            self.logger.error("Fatal error in worker", error=str(e))
+            self.logger.error(f"Fatal error in worker: {str(e)}")
             raise
     
     async def get_symbols_to_scan(self) -> List[str]:
@@ -175,7 +168,7 @@ class BaseWorker(ABC):
             symbols: Список символов для назначения
         """
         self.assigned_symbols = set(symbols)
-        self.logger.debug("Assigned symbols", count=len(symbols))
+        self.logger.debug(f"Assigned {len(symbols)} symbols")
     
     def add_symbol(self, symbol: str):
         """
@@ -185,7 +178,7 @@ class BaseWorker(ABC):
             symbol: Символ для добавления
         """
         self.assigned_symbols.add(symbol)
-        self.logger.debug("Added symbol", symbol=symbol)
+        self.logger.debug(f"Added symbol: {symbol}")
     
     def remove_symbol(self, symbol: str):
         """
@@ -195,7 +188,7 @@ class BaseWorker(ABC):
             symbol: Символ для удаления
         """
         self.assigned_symbols.discard(symbol)
-        self.logger.debug("Removed symbol", symbol=symbol)
+        self.logger.debug(f"Removed symbol: {symbol}")
     
     def get_stats(self) -> Dict:
         """
