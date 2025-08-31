@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from src.workers.base_worker import BaseWorker
 from src.workers.adaptive_workers import AdaptiveWorkerManager
 from src.exchanges.base_exchange import BaseExchange
+from src.analytics.adaptive_categories import AdaptiveCategorizer
 from config.main_config import PRIMARY_SCAN_CONFIG, FILTERING_CONFIG
 from src.utils.logger import get_component_logger
 
@@ -86,32 +87,33 @@ class PrimaryScanner:
         self.logger.debug(f"Added large order: {order.symbol} ${order.usd_value:,.0f} #{order.order_hash}")
     
     def _get_scan_results(self) -> Dict:
-        """Получение результатов сканирования (по спецификации - без адаптивных категорий)"""
+        """Получение результатов сканирования с адаптивными категориями"""
         duration = 0
         if self.scan_start_time:
             end_time = self.scan_end_time or datetime.now(timezone.utc)
             duration = (end_time - self.scan_start_time).total_seconds()
-        
+
         # Сортируем ордера по размеру (убывание)
         sorted_orders = sorted(self.found_orders, key=lambda x: x.usd_value, reverse=True)
-        
-        # Статичная категоризация по спецификации (0-0.333, 0.333-0.666, 0.666-1)
-        from src.analytics.weight_calculator import WeightCalculator
-        
-        calculator = WeightCalculator()
-        categories = {"basic": [], "gold": [], "diamond": []}
-        
-        # Рассчитываем веса для всех ордеров и категоризируем
-        for order in self.found_orders:
-            order_data = self._order_to_dict(order)
-            weight_data = calculator.calculate_order_weight(order_data)
-            
-            recommended_weight = weight_data.get("weights", {}).get("recommended", 0)
-            category = weight_data.get("categories", {}).get("recommended", "basic")
-            
-            # Добавляем в соответствующую категорию
-            categories[category].append(order_data)
-        
+
+        # --- Адаптивная категоризация ---
+        categorizer = AdaptiveCategorizer()
+        order_values = [order.usd_value for order in self.found_orders]
+        adaptive_data = categorizer.calculate_adaptive_thresholds(order_values)
+
+        # Преобразуем ордера в словари для категорий
+        order_dicts = [self._order_to_dict(order) for order in self.found_orders]
+        categories = categorizer.categorize_orders(order_dicts, adaptive_data)
+
+        # --- Статистика ---
+        stats = {
+            "symbols_with_orders": len(self.orders_by_symbol),
+            "round_level_orders": len([o for o in self.found_orders if o.is_round_level]),
+            "max_usd_value": max([o.usd_value for o in self.found_orders], default=0),
+            "min_usd_value": min([o.usd_value for o in self.found_orders], default=0),
+            "avg_usd_value": (sum([o.usd_value for o in self.found_orders]) / len(self.found_orders)) if self.found_orders else 0
+        }
+
         return {
             "scan_completed": True,
             "scan_start_time": self.scan_start_time.isoformat() if self.scan_start_time else None,
@@ -120,23 +122,27 @@ class PrimaryScanner:
             "total_symbols_scanned": self.scanned_symbols,
             "total_large_orders": self.total_large_orders,
             "orders_by_symbol": self.orders_by_symbol,
-            "top_orders": [self._order_to_dict(order) for order in sorted_orders[:10]],
-            
-            # Статичные категории по спецификации
-            "categories": {
-                "basic": len(categories["basic"]),
-                "gold": len(categories["gold"]), 
-                "diamond": len(categories["diamond"])
+            "top_orders": order_dicts[:10],
+
+            # Адаптивные категории
+            "adaptive_categories": {
+                "method": adaptive_data["method"],
+                "thresholds": adaptive_data["thresholds"],
+                "distribution": {
+                    "diamond": len(categories["diamond"]),
+                    "gold": len(categories["gold"]),
+                    "basic": len(categories["basic"])
+                },
+                "categories": categories
             },
-            
+
+            # Статистика и перцентили
             "statistics": {
-                "symbols_with_orders": len(self.orders_by_symbol),
-                "round_level_orders": len([o for o in self.found_orders if o.is_round_level]),
-                "max_usd_value": max([o.usd_value for o in self.found_orders]) if self.found_orders else 0,
-                "min_usd_value": min([o.usd_value for o in self.found_orders]) if self.found_orders else 0,
-                "avg_usd_value": sum([o.usd_value for o in self.found_orders]) / len(self.found_orders) if self.found_orders else 0
+                **adaptive_data.get("stats", {}),
+                "percentiles": adaptive_data.get("percentiles", {}),
+                **stats
             }
-        }
+    }
     
     def _order_to_dict(self, order: LargeOrder) -> Dict:
         """Преобразование ордера в словарь"""
@@ -314,7 +320,6 @@ class PrimaryScanner:
     async def _scan_symbol_chunk(self, symbols: List[str], worker_id: int):
         """Сканирование группы символов одним воркером"""
         self.logger.debug(f"Worker {worker_id} started with {len(symbols)} symbols")
-        
         for symbol in symbols:
             try:
                 # Сканируем символ
@@ -351,8 +356,6 @@ class PrimaryScanner:
                 
                 self.scanned_symbols += 1
                 
-                # Задержка между запросами
-                await asyncio.sleep(self.config.get("min_request_delay", 0.1))
                 
             except Exception as e:
                 self.logger.error(f"Worker {worker_id} error scanning {symbol}: {str(e)}")

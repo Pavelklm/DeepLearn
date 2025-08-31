@@ -16,23 +16,10 @@ class AdaptiveCategorizer:
         self.logger = logger
         
     def calculate_adaptive_thresholds(self, order_values: List[float]) -> Dict[str, Dict]:
-        """
-        Рассчитать адаптивные пороги на основе статистики ордеров
-        
-        Args:
-            order_values: Список USD стоимостей найденных ордеров
-            
-        Returns:
-            Словарь с порогами и метаданными
-        """
         if len(order_values) < 3:
-            # Фаллбэк к статичным порогам если ордеров мало
             return self._get_static_thresholds()
         
-        # Сортируем значения
         sorted_values = sorted(order_values)
-        
-        # Вычисляем статистики
         stats = {
             "min": min(sorted_values),
             "max": max(sorted_values),
@@ -41,24 +28,20 @@ class AdaptiveCategorizer:
             "count": len(sorted_values)
         }
         
-        # Вычисляем перцентили
-        q25 = self._percentile(sorted_values, 25)  # 1-я квартиль
-        q50 = stats["median"]                       # 2-я квартиль (медиана)
-        q75 = self._percentile(sorted_values, 75)  # 3-я квартиль
-        q90 = self._percentile(sorted_values, 90)  # 90-й перцентиль
+        q25 = self._percentile(sorted_values, 25)
+        q50 = stats["median"]
+        q75 = self._percentile(sorted_values, 75)
+        q90 = self._percentile(sorted_values, 90)
         
-        # Метод 1: Квартильная система
         quartile_thresholds = {
             "basic": {"min": 0, "max": q50},
             "gold": {"min": q50, "max": q75}, 
             "diamond": {"min": q75, "max": float('inf')}
         }
         
-        # Метод 2: Статистическая система (среднее + стандартное отклонение)
         if len(sorted_values) > 1:
             std_dev = statistics.stdev(sorted_values)
             mean = stats["mean"]
-            
             statistical_thresholds = {
                 "basic": {"min": 0, "max": mean},
                 "gold": {"min": mean, "max": mean + std_dev},
@@ -67,22 +50,23 @@ class AdaptiveCategorizer:
         else:
             statistical_thresholds = quartile_thresholds
         
-        # Метод 3: Процентильная система 
         percentile_thresholds = {
             "basic": {"min": 0, "max": q75},
             "gold": {"min": q75, "max": q90},
             "diamond": {"min": q90, "max": float('inf')}
         }
         
-        # Выбираем метод на основе распределения данных
         selected_method, selected_thresholds = self._select_best_method(
             sorted_values, quartile_thresholds, statistical_thresholds, percentile_thresholds
         )
         
-        self.logger.info(f"Using {selected_method} thresholds",
-                        basic_max=selected_thresholds["basic"]["max"],
-                        gold_max=selected_thresholds["gold"]["max"],
-                        diamond_min=selected_thresholds["diamond"]["min"])
+        # Логируем безопасно через форматированную строку
+        self.logger.info(
+            f"Using {selected_method} thresholds | "
+            f"basic_max={selected_thresholds['basic']['max']}, "
+            f"gold_max={selected_thresholds['gold']['max']}, "
+            f"diamond_min={selected_thresholds['diamond']['min']}"
+        )
         
         return {
             "method": selected_method,
@@ -161,57 +145,3 @@ class AdaptiveCategorizer:
         return categories
 
 
-# Интеграция в PrimaryScanner
-def integrate_adaptive_categories():
-    """Пример интеграции в PrimaryScanner"""
-    
-    # В методе _get_scan_results класса PrimaryScanner:
-    
-    def _get_scan_results_adaptive(self) -> Dict:
-        """Получение результатов сканирования с адаптивными категориями"""
-        duration = 0
-        if self.scan_start_time:
-            end_time = self.scan_end_time or datetime.now(timezone.utc)
-            duration = (end_time - self.scan_start_time).total_seconds()
-        
-        # Сортируем ордера по размеру
-        sorted_orders = sorted(self.found_orders, key=lambda x: x.usd_value, reverse=True)
-        
-        # Адаптивная категоризация
-        categorizer = AdaptiveCategorizer()
-        order_values = [order.usd_value for order in self.found_orders]
-        adaptive_data = categorizer.calculate_adaptive_thresholds(order_values)
-        
-        # Категоризируем ордера
-        order_dicts = [self._order_to_dict(order) for order in self.found_orders]
-        categories = categorizer.categorize_orders(order_dicts, adaptive_data)
-        
-        return {
-            "scan_completed": True,
-            "scan_start_time": self.scan_start_time.isoformat() if self.scan_start_time else None,
-            "scan_end_time": self.scan_end_time.isoformat() if self.scan_end_time else None,
-            "duration_seconds": duration,
-            "total_symbols_scanned": self.scanned_symbols,
-            "total_large_orders": self.total_large_orders,
-            "orders_by_symbol": self.orders_by_symbol,
-            "top_orders": [self._order_to_dict(order) for order in sorted_orders[:10]],
-            
-            # Адаптивная статистика
-            "adaptive_categories": {
-                "method": adaptive_data["method"],
-                "thresholds": adaptive_data["thresholds"],
-                "distribution": {
-                    "diamond": len(categories["diamond"]),
-                    "gold": len(categories["gold"]),
-                    "basic": len(categories["basic"])
-                },
-                "categories": categories
-            },
-            
-            "statistics": {
-                **adaptive_data.get("stats", {}),
-                "percentiles": adaptive_data.get("percentiles", {}),
-                "symbols_with_orders": len(self.orders_by_symbol),
-                "round_level_orders": len([o for o in self.found_orders if o.is_round_level])
-            }
-        }

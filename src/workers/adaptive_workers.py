@@ -126,21 +126,29 @@ class AdaptiveWorkerManager:
     async def _add_workers(self, count: int):
         """
         Добавить воркеров
-        
+
         Args:
             count: Количество воркеров для добавления
         """
         new_workers = []
-        
+
+        # Берём exchange из конфига (или передаем явно через config)
+        exchange = self.config.get("exchange")
+        if exchange is None:
+            raise ValueError("Config for worker must include 'exchange' key!")
+
         for _ in range(count):
-            worker = self.worker_class(self.next_worker_id, self.config)
+            # Создаём копию конфига для воркера
+            worker_config = self.config.copy()
+            worker_config["exchange"] = exchange  # гарантируем наличие exchange
+
+            worker = self.worker_class(self.next_worker_id, worker_config)
             self.next_worker_id += 1
-            
+
             await worker.start()
             new_workers.append(worker)
-        
+
         self.workers.extend(new_workers)
-        
         self.logger.info(f"Added {count} workers (total: {len(self.workers)})")
     
     async def _remove_workers(self, count: int):
