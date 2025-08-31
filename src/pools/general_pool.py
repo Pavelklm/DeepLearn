@@ -295,7 +295,7 @@ class GeneralPool:
         except Exception as e:
             self.logger.error(f"Error handling large orders: {str(e)}")
     
-    def _is_near_round_level(self, price: float, threshold: float = 0.02) -> bool:
+    def _is_near_round_level(self, price: float, threshold: float = 0.001) -> bool:
         """Проверка близости к психологическому уровню"""
         round_numbers = [0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0]
         

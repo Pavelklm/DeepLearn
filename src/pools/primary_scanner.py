@@ -262,7 +262,7 @@ class PrimaryScanner:
         
         return large_orders
     
-    def _is_near_round_level(self, price: float, threshold: float = 0.02) -> bool:
+    def _is_near_round_level(self, price: float, threshold: float = 0.001) -> bool:
         """Проверка близости к психологическому (круглому) уровню"""
         round_numbers = [0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0]
         
@@ -275,52 +275,41 @@ class PrimaryScanner:
         return False
     
     async def run_full_scan(self) -> Dict:
-        """Полное сканирование всех топ-250 монет (метод из спецификации)"""
         self.logger.info("Starting full scan of top symbols")
         self.scan_start_time = datetime.now(timezone.utc)
-        
+
         try:
-            # Получаем топ символы
             top_symbols = await self.exchange.get_top_volume_symbols(
                 self.config["top_coins_limit"]
             )
-            
+
             if not top_symbols:
                 raise Exception("No symbols received for scanning")
-            
+
             self.logger.info(f"Scanning {len(top_symbols)} symbols with {self.config['workers_count']} workers")
-            
+
             # Разделяем символы между воркерами
             chunk_size = len(top_symbols) // self.config["workers_count"]
             symbol_chunks = []
-            
+
             for i in range(self.config["workers_count"]):
                 start_idx = i * chunk_size
-                if i == self.config["workers_count"] - 1:
-                    # Последний воркер берет все оставшиеся символы
-                    end_idx = len(top_symbols)
-                else:
-                    end_idx = start_idx + chunk_size
-                
+                end_idx = len(top_symbols) if i == self.config["workers_count"] - 1 else start_idx + chunk_size
                 if start_idx < len(top_symbols):
                     symbol_chunks.append(top_symbols[start_idx:end_idx])
-            
-            # Запускаем воркеров параллельно
-            tasks = []
-            for i, chunk in enumerate(symbol_chunks):
-                task = asyncio.create_task(self._scan_symbol_chunk(chunk, i))
-                tasks.append(task)
-            
-            # Ждем завершения всех воркеров
+
+            # Запускаем воркеров
+            tasks = [asyncio.create_task(self._scan_symbol_chunk(chunk, i)) for i, chunk in enumerate(symbol_chunks)]
             await asyncio.gather(*tasks)
-            
-            return self._get_scan_results()
-            
+
         except Exception as e:
             self.logger.error(f"Error in full scan: {str(e)}")
             raise
         finally:
             self.scan_end_time = datetime.now(timezone.utc)
+
+        return self._get_scan_results()
+
     
     async def _scan_symbol_chunk(self, symbols: List[str], worker_id: int):
         """Сканирование группы символов одним воркером"""

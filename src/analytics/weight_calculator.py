@@ -66,6 +66,7 @@ class WeightCalculator:
         # Рекомендуемый вес
         weights["recommended"] = weights.get(RECOMMENDED_ALGORITHM, 0.0)
         categories["recommended"] = categories.get(f"by_{RECOMMENDED_ALGORITHM}", "basic")
+        categories["by_recommended"] = categories["recommended"]  # Добавляем симметричную категорию
         
         return {
             "time_factors": time_factors,
@@ -336,7 +337,7 @@ class WeightCalculator:
     
     def _categorize_weight(self, weight: float) -> str:
         """
-        Определить категорию по весу
+        Определить категорию по весу (по спецификации: 0-0.333, 0.333-0.666, 0.666-1)
         
         Args:
             weight: Вес ордера
@@ -344,20 +345,6 @@ class WeightCalculator:
         Returns:
             Категория: basic, gold, diamond
         """
-        from config.main_config import WEIGHT_CATEGORIES
-        
-        for category, bounds in WEIGHT_CATEGORIES.items():
-            if bounds["min"] <= weight < bounds["max"]:
-                return category
-        
-        # Если вес = 1.0, то diamond
-        if weight >= WEIGHT_CATEGORIES["diamond"]["min"]:
-            return "diamond"
-        
-        return "basic"
-    
-    def _categorize_weight(self, weight: float) -> str:
-        """Определить категорию по весу (по спецификации: 0-0.333, 0.333-0.666, 0.666-1)"""
         from config.main_config import WEIGHT_CATEGORIES
         
         for category, bounds in WEIGHT_CATEGORIES.items():

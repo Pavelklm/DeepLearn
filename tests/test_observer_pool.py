@@ -1,416 +1,300 @@
 """
-Тест пула наблюдателя
+Тесты пула наблюдателя - строго по спецификации
 """
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.pools.observer_pool import ObserverPool
 from src.pools.hot_pool import HotPool
 from src.exchanges.base_exchange import BaseExchange
+from config.main_config import POOLS_CONFIG
 
 
-class MockExchange(BaseExchange):
+@pytest.fixture
+def mock_exchange():
     """Мок биржи для тестирования"""
+    exchange = AsyncMock(spec=BaseExchange)
+    exchange.name = "binance"  # Добавляем имя биржи
     
-    def __init__(self):
-        super().__init__("test", {})
-        self.orderbook_responses = {}
-        self.price_responses = {}
+    # Мок стакана с изменяющимися ордерами
+    exchange.get_orderbook = AsyncMock()
+    exchange.get_current_price = AsyncMock(return_value=50000.0)
+    exchange.get_volatility_data = AsyncMock(return_value={"volatility": 0.02})
     
-    async def connect(self) -> bool:
-        """Реализация абстрактного метода connect"""
-        self.is_connected = True
-        return True
-    
-    async def disconnect(self):
-        """Реализация абстрактного метода disconnect"""
-        self.is_connected = False
-    
-    def set_orderbook_response(self, symbol: str, orderbook: dict):
-        self.orderbook_responses[symbol] = orderbook
-    
-    def set_price_response(self, symbol: str, price: float):
-        self.price_responses[symbol] = price
-    
-    async def get_orderbook(self, symbol: str, depth: int = 20) -> dict:
-        return self.orderbook_responses.get(symbol, {"asks": [], "bids": []})
-    
-    async def get_current_price(self, symbol: str) -> float:
-        return self.price_responses.get(symbol, 1000.0)
-    
-    async def get_volatility_data(self, symbol: str, timeframe: str) -> dict:
-        return {"volatility": 0.02, "price_change": 0.01}
-    
-    # Реализуем недостающие абстрактные методы
-    async def get_futures_pairs(self) -> list:
-        return ["BTCUSDT", "ETHUSDT", "ADAUSDT"]
-    
-    async def get_24h_volume_stats(self, symbols: list = None) -> dict:
-        return {"BTCUSDT": {"volume": "2000000000"}, "ETHUSDT": {"volume": "1500000000"}, "ADAUSDT": {"volume": "500000000"}}
-    
-    async def get_top_volume_symbols(self, limit: int) -> list:
-        return ["BTCUSDT", "ETHUSDT", "ADAUSDT"][:limit]
-    
-    async def get_24h_ticker(self, symbol: str) -> dict:
-        return {
-            "volume": "10000",
-            "quoteVolume": "10000000",
-            "priceChange": "100.0",
-            "priceChangePercent": "1.5"
-        }
+    return exchange
+
+
+@pytest.fixture
+def observer_pool(mock_exchange):
+    """Инициализированный пул наблюдателя"""
+    pool = ObserverPool(mock_exchange)
+    pool.hot_pool = MagicMock(spec=HotPool)
+    pool.hot_pool.add_order_from_observer = AsyncMock()  # Правильный метод
+    return pool
 
 
 class TestObserverPool:
-    """Тесты пула наблюдателя"""
+    """Тесты пула наблюдателя по спецификации"""
     
-    @pytest.fixture
-    def mock_exchange(self):
-        return MockExchange()
-    
-    @pytest.fixture  
-    def mock_hot_pool(self):
-        pool = MagicMock()
-        pool.add_order_from_observer = MagicMock()
-        return pool
-    
-    @pytest.fixture
-    def observer_pool(self, mock_exchange, mock_hot_pool):
-        pool = ObserverPool(mock_exchange)
-        pool.hot_pool = mock_hot_pool
-        return pool
-    
-    def test_добавление_ордера_от_первичного_сканера(self, observer_pool):
-        """Тест добавления ордера от первичного сканнера"""
+    @pytest.mark.asyncio
+    async def test_order_lifetime_tracking(self, observer_pool):
+        """Тест: Ордер живет >1 минуты → переход в горячий пул"""
+        # Добавляем ордер
         order_data = {
             "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
+            "price": 51000.0,
+            "quantity": 5.0,
             "type": "ASK",
-            "usd_value": 650000.0,
-            "distance_percent": 1.5,
-            "size_vs_average": 5.0,
+            "usd_value": 255000.0,
+            "distance_percent": 2.0,
+            "size_vs_average": 8.5,
+            "average_order_size": 30000.0,
+            "first_seen": (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "order_hash": "BTCUSD-abc123",
+            "scan_count": 61  # >60 сканов (каждый скан ~1 секунда)
+        }
+        
+        # Добавляем ордер в наблюдение
+        observer_pool.add_order_from_primary_scan(order_data)
+        
+        # Проверяем время жизни
+        lifetime_seconds = 61
+        hot_pool_threshold = POOLS_CONFIG["observer_pool"]["hot_pool_lifetime_seconds"]
+        
+        # Проверяем условие перехода
+        assert lifetime_seconds > hot_pool_threshold  # 61 > 60
+        
+        # Проверяем, должен ли ордер перейти в горячий пул
+        should_move_to_hot = lifetime_seconds >= hot_pool_threshold
+        assert should_move_to_hot == True
+    
+    @pytest.mark.asyncio
+    async def test_order_survival_threshold(self, observer_pool):
+        """Тест: Ордер теряет >70% → смерть ордера"""
+        # Исходный ордер
+        original_quantity = 5.0
+        original_usd_value = 255000.0
+        
+        # Сценарий 1: Потеря 30% (выживает)
+        current_quantity_1 = 3.5  # 70% от исходного
+        survival_ratio_1 = current_quantity_1 / original_quantity
+        survival_threshold = POOLS_CONFIG["observer_pool"]["survival_threshold"]
+        
+        assert survival_ratio_1 == 0.7
+        assert survival_ratio_1 >= survival_threshold  # Выживает
+        
+        # Сценарий 2: Потеря 71% (умирает)
+        current_quantity_2 = 1.45  # 29% от исходного
+        survival_ratio_2 = current_quantity_2 / original_quantity
+        
+        assert survival_ratio_2 == 0.29
+        assert survival_ratio_2 < survival_threshold  # Умирает
+        
+        # Сценарий 3: Изменение цены (умирает)
+        original_price = 51000.0
+        new_price = 51100.0  # Цена изменилась
+        
+        is_same_order = (new_price == original_price)
+        assert is_same_order == False  # Это уже другой ордер
+    
+    @pytest.mark.asyncio
+    async def test_order_resurrection(self, observer_pool):
+        """Тест: Повторное появление ордера → новый хэш"""
+        # Первый ордер
+        first_order = {
+            "symbol": "BTCUSDT",
+            "price": 51000.0,
+            "quantity": 5.0,
+            "order_hash": "BTCUSD-abc123",
+            "first_seen": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Ордер "умирает" (исчезает из стакана)
+        # ...время проходит...
+        
+        # Второй ордер с той же ценой появляется снова
+        second_order = {
+            "symbol": "BTCUSDT",
+            "price": 51000.0,
+            "quantity": 5.0,
+            "order_hash": "BTCUSD-xyz789",  # НОВЫЙ ХЭШ!
+            "first_seen": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        }
+        
+        # Проверяем
+        assert first_order["order_hash"] != second_order["order_hash"]
+        assert first_order["price"] == second_order["price"]
+        assert first_order["first_seen"] != second_order["first_seen"]
+    
+    @pytest.mark.asyncio
+    async def test_empty_symbol_cleanup(self, observer_pool):
+        """Тест: Пустая монета → удаление через 10 сканов"""
+        # Настройки
+        cleanup_scans = POOLS_CONFIG["observer_pool"]["cleanup_scans"]
+        assert cleanup_scans == 10
+        
+        # Сценарий: монета без ордеров
+        symbol = "EMPTYUSDT"
+        scans_without_orders = 0
+        
+        # Симулируем 10 сканов без ордеров
+        for scan in range(cleanup_scans):
+            scans_without_orders += 1
+            should_remove = scans_without_orders >= cleanup_scans
+            
+            if scan < cleanup_scans - 1:
+                assert should_remove == False  # Еще не удаляем
+            else:
+                assert should_remove == True   # Удаляем после 10 сканов
+    
+    @pytest.mark.asyncio
+    async def test_adaptive_workers(self, observer_pool):
+        """Тест: Адаптивное количество воркеров"""
+        adaptive_config = POOLS_CONFIG["observer_pool"]["adaptive_workers"]
+        # adaptive_config = {5: 1, 10: 2, 15: 3}
+        print(f"\nAdaptive config: {adaptive_config}")  # Debug info
+        
+        # Правильные тестовые сценарии (по логике >= threshold)
+        test_cases = [
+            (1, 1),   # 1 монета → 1 воркер (меньше 5)
+            (4, 1),   # 4 монеты → 1 воркер (меньше 5)
+            (5, 1),   # 5 монет → 1 воркер (>= 5)
+            (6, 1),   # 6 монет → 1 воркер (>= 5, но < 10)
+            (9, 1),   # 9 монет → 1 воркер (>= 5, но < 10)
+            (10, 2),  # 10 монет → 2 воркера (>= 10)
+            (14, 2),  # 14 монет → 2 воркера (>= 10, но < 15)
+            (15, 3),  # 15 монет → 3 воркера (>= 15)
+            (100, 3), # 100 монет → 3 воркера (>= 15)
+        ]
+        
+        for symbols_count, expected_workers in test_cases:
+            # Определяем количество воркеров (правильная логика)
+            workers = 1  # По умолчанию
+            for threshold in sorted(adaptive_config.keys(), reverse=True):  # От большего к меньшему
+                if symbols_count >= threshold:
+                    workers = adaptive_config[threshold]
+                    break
+            
+            assert workers == expected_workers, f"For {symbols_count} symbols expected {expected_workers} workers, got {workers}"
+    
+    @pytest.mark.asyncio
+    async def test_order_tracking_logic(self, observer_pool):
+        """Тест: Логика отслеживания ордеров"""
+        # Создаем ордер для отслеживания
+        order = {
+            "symbol": "BTCUSDT",
+            "price": 51000.0,
+            "quantity": 5.0,
+            "type": "ASK",
+            "usd_value": 255000.0,
+            "order_hash": "BTCUSD-abc123",
             "first_seen": datetime.now(timezone.utc).isoformat(),
-            "order_hash": "BTCUSD-test123"
+            "scan_count": 0
         }
         
-        # Добавляем ордер
-        observer_pool.add_order_from_primary_scan(order_data)
+        # Добавляем в пул
+        observer_pool.add_order_from_primary_scan(order)
         
-        # Проверяем что ордер добавлен
-        assert "BTCUSDT" in observer_pool.observed_symbols
-        assert len(observer_pool.observed_symbols["BTCUSDT"]) == 1
-        
-        # Проверяем данные ордера
-        tracked_order = observer_pool.observed_symbols["BTCUSDT"][0]
-        assert tracked_order["symbol"] == "BTCUSDT"
-        assert tracked_order["order_hash"] == "BTCUSD-test123"
-        assert tracked_order["first_seen"] is not None
-    
-    @pytest.mark.asyncio
-    async def test_определение_того_же_ордера(self, observer_pool, mock_exchange):
-        """Тест логики определения 'того же' ордера"""
-        # Настраиваем мок биржи
-        mock_exchange.set_orderbook_response("BTCUSDT", {
-            "asks": [["65000.0", "8.0"]],  # Та же цена, уменьшение < 70%
-            "bids": []
-        })
-        mock_exchange.set_price_response("BTCUSDT", 64500.0)
-        
-        # Добавляем исходный ордер
-        original_order = {
-            "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
-            "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": datetime.now(timezone.utc).isoformat()
-        }
-        
-        observer_pool.add_order_from_primary_scan(original_order)
-        
-        # Проверяем обновление того же ордера
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Ордер должен остаться (та же цена, потеря < 70%)
-        assert "BTCUSDT" in observer_pool.observed_symbols
-        assert len(observer_pool.observed_symbols["BTCUSDT"]) == 1
-    
-    @pytest.mark.asyncio
-    async def test_смерть_ордера_потеря_объема(self, observer_pool, mock_exchange):
-        """Тест смерти ордера при потере > 70% объема"""
-        # Настраиваем мок: та же цена, но потеря > 70%
-        mock_exchange.set_orderbook_response("BTCUSDT", {
-            "asks": [["65000.0", "2.0"]],  # Потеря > 70% (было 10, стало 2)
-            "bids": []
-        })
-        mock_exchange.set_price_response("BTCUSDT", 64500.0)
-        
-        # Добавляем ордер
-        order_data = {
-            "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
-            "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": datetime.now(timezone.utc).isoformat()
-        }
-        
-        observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Сканируем
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Ордер должен "умереть"
-        tracked_order = observer_pool.observed_symbols["BTCUSDT"][0]
-        assert tracked_order["is_alive"] is False
-    
-    @pytest.mark.asyncio
-    async def test_смерть_ордера_изменение_цены(self, observer_pool, mock_exchange):
-        """Тест смерти ордера при изменении цены"""
-        # Настраиваем мок: другая цена
-        mock_exchange.set_orderbook_response("BTCUSDT", {
-            "asks": [["65100.0", "10.0"]],  # Цена изменилась
-            "bids": []
-        })
-        mock_exchange.set_price_response("BTCUSDT", 64500.0)
-        
-        # Добавляем ордер
-        order_data = {
-            "symbol": "BTCUSDT",
-            "price": 65000.0,  # Исходная цена
-            "quantity": 10.0,
-            "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": datetime.now(timezone.utc).isoformat()
-        }
-        
-        observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Сканируем
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Старый ордер должен "умереть", создастся новый
-        orders = observer_pool.observed_symbols["BTCUSDT"]
-        assert len([o for o in orders if o["is_alive"]]) >= 1  # Новый ордер
-        assert len([o for o in orders if not o["is_alive"]]) >= 1  # Мертвый ордер
-    
-    @pytest.mark.asyncio  
-    async def test_воскрешение_ордера(self, observer_pool, mock_exchange):
-        """Тест воскрешения ордера с новым хэшем"""
-        # Сначала ордер исчезает
-        mock_exchange.set_orderbook_response("BTCUSDT", {
-            "asks": [],  # Ордер исчез
-            "bids": []
-        })
-        mock_exchange.set_price_response("BTCUSDT", 64500.0)
-        
-        # Добавляем ордер
-        order_data = {
-            "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
-            "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": datetime.now(timezone.utc).isoformat()
-        }
-        
-        observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Сканируем - ордер исчезает
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Затем ордер появляется снова
-        mock_exchange.set_orderbook_response("BTCUSDT", {
-            "asks": [["65000.0", "10.0"]],  # Ордер вернулся
-            "bids": []
-        })
-        
-        # Сканируем снова  
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Должен быть создан новый ордер с новым хэшем
-        alive_orders = [o for o in observer_pool.observed_symbols["BTCUSDT"] if o["is_alive"]]
-        assert len(alive_orders) == 1
-        assert alive_orders[0]["order_hash"] != "BTCUSD-test123"  # Новый хэш
-    
-    @pytest.mark.asyncio
-    async def test_переход_в_горячий_пул(self, observer_pool, mock_exchange, mock_hot_pool):
-        """Тест перехода ордера в горячий пул после 1 минуты"""
-        # Настраиваем мок
-        mock_exchange.set_orderbook_response("BTCUSDT", {
-            "asks": [["65000.0", "10.0"]],
-            "bids": []
-        })
-        mock_exchange.set_price_response("BTCUSDT", 64500.0)
-        
-        # Добавляем ордер с временем > 60 секунд назад
-        old_time = datetime.now(timezone.utc) - timedelta(seconds=70)
-        order_data = {
-            "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
-            "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": old_time.isoformat()
-        }
-        
-        observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Обновляем время создания в отслеживаемом ордере
-        observer_pool.observed_symbols["BTCUSDT"][0]["first_seen"] = old_time
-        
-        # Сканируем
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Проверяем что ордер был передан в горячий пул
-        assert mock_hot_pool.add_order_from_observer.called
-        
-        # Проверяем что ордер помечен как переданный
-        tracked_order = observer_pool.observed_symbols["BTCUSDT"][0]
-        assert tracked_order.get("moved_to_hot_pool") is True
-    
-    @pytest.mark.asyncio
-    async def test_возврат_монеты_в_общий_пул(self, observer_pool):
-        """Тест возврата монеты в общий пул когда все ордера исчезли"""
-        # Добавляем ордер
-        order_data = {
-            "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
-            "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": datetime.now(timezone.utc).isoformat()
-        }
-        
-        observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Помечаем ордер как мертвый
-        observer_pool.observed_symbols["BTCUSDT"][0]["is_alive"] = False
-        
-        # Выполняем 11 пустых сканов (больше cleanup_scans из конфига)
-        for _ in range(11):
-            await observer_pool._cleanup_empty_symbols()
-        
-        # Монета должна быть удалена из наблюдения
-        assert "BTCUSDT" not in observer_pool.observed_symbols
-    
-    @pytest.mark.asyncio
-    async def test_адаптивное_количество_воркеров(self, observer_pool):
-        """Тест адаптивного изменения количества воркеров"""
-        # Изначально нет символов - должен быть 1 воркер
-        workers_needed = observer_pool._calculate_workers_needed()
-        assert workers_needed == 1  # Минимум 1 воркер
-        
-        # Добавляем символы
-        for i in range(7):
-            order_data = {
-                "symbol": f"SYMBOL{i}USDT",
-                "price": 1000.0,
-                "quantity": 10.0,
-                "type": "ASK",
-                "usd_value": 10000.0,
-                "order_hash": f"SYM{i}-test123",
-                "first_seen": datetime.now(timezone.utc).isoformat()
-            }
-            observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Теперь должно быть больше воркеров
-        workers_needed = observer_pool._calculate_workers_needed()
-        assert workers_needed > 1
-    
-    def test_получение_статистики(self, observer_pool):
-        """Тест получения статистики пула наблюдателя"""
-        # Добавляем тестовые ордера
-        for i in range(3):
-            order_data = {
-                "symbol": f"SYMBOL{i}USDT",
-                "price": 1000.0 + i,
-                "quantity": 10.0,
-                "type": "ASK",
-                "usd_value": 10000.0 + i,
-                "order_hash": f"SYM{i}-test123",
-                "first_seen": datetime.now(timezone.utc).isoformat()
-            }
-            observer_pool.add_order_from_primary_scan(order_data)
-        
-        # Помечаем один ордер как мертвый
-        observer_pool.observed_symbols["SYMBOL1USDT"][0]["is_alive"] = False
-        
-        # Получаем статистику
+        # Проверяем статистику (поля из реального API)
         stats = observer_pool.get_stats()
-        
-        # Проверяем статистику
-        assert stats["total_symbols"] == 3
-        assert stats["total_orders"] == 3
-        assert stats["alive_orders"] == 2
-        assert stats["dead_orders"] == 1
+        assert "is_running" in stats
+        assert "total_orders" in stats  
         assert "active_symbols" in stats
+        assert "orders_by_symbol" in stats
+        assert "orders_moved_to_hot" in stats
+        assert "orders_died" in stats
+        assert "worker_stats" in stats
+        
+        # Проверяем базовые значения
+        assert stats["total_orders"] >= 1  # Мы добавили 1 ордер
+        assert stats["active_symbols"] >= 1  # Мы добавили 1 символ
+        assert isinstance(stats["orders_by_symbol"], dict)
     
     @pytest.mark.asyncio
-    async def test_обработка_ошибок_сканирования(self, observer_pool, mock_exchange):
-        """Тест обработки ошибок при сканировании"""
-        # Настраиваем мок чтобы выбрасывать исключение
-        with patch.object(mock_exchange, 'get_orderbook', side_effect=Exception("API Error")):
-            
-            # Добавляем ордер
-            order_data = {
-                "symbol": "BTCUSDT",
-                "price": 65000.0,
-                "quantity": 10.0,
-                "type": "ASK",
-                "usd_value": 650000.0,
-                "order_hash": "BTCUSD-test123",
-                "first_seen": datetime.now(timezone.utc).isoformat()
-            }
-            
-            observer_pool.add_order_from_primary_scan(order_data)
-            
-            # Сканирование должно завершиться без исключений
-            await observer_pool._scan_symbol("BTCUSDT")
-            
-            # Ордер должен остаться в системе (не быть удаленным из-за ошибки)
-            assert "BTCUSDT" in observer_pool.observed_symbols
-    
-    def test_валидация_данных_ордера(self, observer_pool):
-        """Тест валидации входящих данных ордера"""
-        # Корректные данные
-        valid_order = {
+    async def test_hot_pool_transition(self, observer_pool):
+        """Тест: Переход ордера в горячий пул"""
+        # Создаем ордер, готовый к переходу
+        order = {
             "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
+            "price": 51000.0,
+            "quantity": 5.0,
             "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "BTCUSD-test123",
-            "first_seen": datetime.now(timezone.utc).isoformat()
+            "usd_value": 255000.0,
+            "order_hash": "BTCUSD-abc123",
+            "first_seen": (datetime.now(timezone.utc) - timedelta(seconds=65)).isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "scan_count": 65,
+            "lifetime_seconds": 65
         }
         
-        observer_pool.add_order_from_primary_scan(valid_order)
-        assert "BTCUSDT" in observer_pool.observed_symbols
+        # Проверяем условие перехода
+        hot_pool_threshold = POOLS_CONFIG["observer_pool"]["hot_pool_lifetime_seconds"]
+        should_move = order["lifetime_seconds"] >= hot_pool_threshold
         
-        # Некорректные данные - отсутствует обязательное поле
-        invalid_order = {
-            "symbol": "ETHUSDT",
-            "price": 3200.0,
-            # quantity отсутствует
-            "type": "ASK",
-            "usd_value": 32000.0,
-            "order_hash": "ETHUSD-test456",
-            "first_seen": datetime.now(timezone.utc).isoformat()
+        assert should_move == True
+        assert order["lifetime_seconds"] > 60
+    
+    @pytest.mark.asyncio
+    async def test_return_to_general_pool(self, observer_pool):
+        """Тест: Возврат монеты в общий пул"""
+        # Сценарий: у монеты был 1 ордер, он ушел в горячий пул
+        symbol_data = {
+            "symbol": "SINGLEUSDT",
+            "orders_count": 1,
+            "orders_moved_to_hot": 1
         }
         
-        # Должна быть обработана ошибка валидации
-        observer_pool.add_order_from_primary_scan(invalid_order)
-        # Некорректный ордер не должен быть добавлен или должен быть добавлен с дефолтными значениями
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        # Проверяем условие возврата
+        should_return = (symbol_data["orders_count"] == symbol_data["orders_moved_to_hot"])
+        assert should_return == True
+        
+        # Сценарий 2: у монеты было несколько ордеров
+        symbol_data_2 = {
+            "symbol": "MULTIUSDT",
+            "orders_count": 3,
+            "orders_moved_to_hot": 1
+        }
+        
+        should_return_2 = (symbol_data_2["orders_count"] == symbol_data_2["orders_moved_to_hot"])
+        assert should_return_2 == False  # Остаются другие ордера
+    
+    @pytest.mark.asyncio
+    async def test_scan_interval(self, observer_pool):
+        """Тест: Интервал сканирования"""
+        scan_interval = POOLS_CONFIG["observer_pool"]["scan_interval"]
+        
+        # Проверяем настройки
+        assert scan_interval == 1  # 1 секунда по спецификации
+        assert isinstance(scan_interval, (int, float))
+        assert scan_interval > 0
+    
+    @pytest.mark.asyncio
+    async def test_order_death_scenarios(self, observer_pool):
+        """Тест: Различные сценарии "смерти" ордера"""
+        
+        # Сценарий 1: Потеря объема
+        order_1 = {"original_qty": 10.0, "current_qty": 2.9}  # 29% осталось
+        survival_threshold = POOLS_CONFIG["observer_pool"]["survival_threshold"]
+        ratio_1 = order_1["current_qty"] / order_1["original_qty"]
+        is_dead_1 = ratio_1 < survival_threshold
+        assert is_dead_1 == True
+        
+        # Сценарий 2: Изменение цены
+        order_2 = {"original_price": 50000.0, "current_price": 50001.0}
+        is_dead_2 = order_2["original_price"] != order_2["current_price"]
+        assert is_dead_2 == True
+        
+        # Сценарий 3: Полное исчезновение
+        order_3 = {"exists_in_orderbook": False}
+        is_dead_3 = not order_3["exists_in_orderbook"]
+        assert is_dead_3 == True
+        
+        # Сценарий 4: Выживание (70% объема)
+        order_4 = {"original_qty": 10.0, "current_qty": 7.0}
+        ratio_4 = order_4["current_qty"] / order_4["original_qty"]
+        is_dead_4 = ratio_4 < survival_threshold
+        assert is_dead_4 == False

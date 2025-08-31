@@ -18,7 +18,7 @@ PRIMARY_SCAN_CONFIG = {
     "orderbook_depth": 20,
     
     # Исключаемые суффиксы (стейблкоины)
-    "excluded_suffixes": ["USDT", "BUSD", "USDC", "FDUSD"],
+    "excluded_suffixes": ["USDT", "BUSD", "USDC", "FDUSD", "TUSD"],
     
     # Таймаут запросов к API (секунды)
     "api_timeout": 10,

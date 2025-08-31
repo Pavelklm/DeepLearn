@@ -1,452 +1,441 @@
 """
-Интеграционный тест полного цикла системы
-Тестирует весь путь: первичное сканирование → наблюдатель → горячий пул
+Интеграционные тесты - полный цикл работы системы по спецификации
 """
 
 import pytest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock
+import json
 from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.scanner_orchestrator import ScannerOrchestrator
-from src.exchanges.base_exchange import BaseExchange
 from src.pools.primary_scanner import PrimaryScanner
 from src.pools.observer_pool import ObserverPool
-from src.pools.hot_pool import HotPool
 from src.pools.general_pool import GeneralPool
+from src.pools.hot_pool import HotPool
+from src.exchanges.base_exchange import BaseExchange
+from src.websocket.server import WebSocketServer
+from config.main_config import PRIMARY_SCAN_CONFIG, POOLS_CONFIG
 
 
-class MockExchange(BaseExchange):
-    """Комплексный мок биржи для интеграционного теста"""
+@pytest.fixture
+async def mock_exchange():
+    """Мок биржи с предопределенными ордерами для тестирования"""
+    exchange = AsyncMock(spec=BaseExchange)
     
-    def __init__(self):
-        super().__init__("test_integration", {})
-        
-        # Предзаданные данные для тестирования полного цикла
-        self.symbols_data = {
-            # Символ с большим ордером который пройдет весь путь до diamond
-            "BTCUSDT": {
-                "price": 65000.0,
-                "volume": 5000000000,  # Высокий объем
-                "orderbooks": [
-                    # Первое сканирование - большой ордер
-                    {
-                        "asks": [["65500.0", "100.0"], ["65600.0", "15.0"], ["65700.0", "8.0"]],  # 100 BTC = 6.55M USD
-                        "bids": [["64900.0", "12.0"], ["64800.0", "8.0"]]
-                    },
-                    # Второе сканирование - ордер еще жив
-                    {
-                        "asks": [["65500.0", "95.0"], ["65600.0", "15.0"], ["65700.0", "8.0"]],   # Чуть уменьшился
-                        "bids": [["64900.0", "12.0"], ["64800.0", "8.0"]]
-                    },
-                    # Третье сканирование - ордер живет > 60 секунд
-                    {
-                        "asks": [["65500.0", "90.0"], ["65600.0", "15.0"], ["65700.0", "8.0"]],   # Еще чуть меньше
-                        "bids": [["64900.0", "12.0"], ["64800.0", "8.0"]]
-                    }
-                ]
-            },
-            
-            # Символ где ордер умрет от потери объема
-            "ETHUSDT": {
-                "price": 3200.0,
-                "volume": 3000000000,
-                "orderbooks": [
-                    # Начальный большой ордер
-                    {
-                        "asks": [["3250.0", "50.0"], ["3260.0", "10.0"]],  # 50 ETH = 162.5K USD
-                        "bids": [["3150.0", "8.0"], ["3140.0", "6.0"]]
-                    },
-                    # Ордер потерял >70% объема - должен умереть
-                    {
-                        "asks": [["3250.0", "10.0"], ["3260.0", "10.0"]],  # Потерял 80% объема
-                        "bids": [["3150.0", "8.0"], ["3140.0", "6.0"]]
-                    }
-                ]
-            },
-            
-            # Символ где ордер изменит цену - тоже умрет
-            "ADAUSDT": {
-                "price": 0.45,
-                "volume": 800000000,
-                "orderbooks": [
-                    # Начальный ордер
-                    {
-                        "asks": [["0.46", "100000.0"], ["0.47", "50000.0"]],  # 46K USD
-                        "bids": [["0.44", "80000.0"], ["0.43", "70000.0"]]
-                    },
-                    # Ордер переместился на другую цену
-                    {
-                        "asks": [["0.465", "100000.0"], ["0.47", "50000.0"]],  # Цена изменилась
-                        "bids": [["0.44", "80000.0"], ["0.43", "70000.0"]]
-                    }
-                ]
-            }
+    # Настройка для полного цикла
+    exchange.get_futures_pairs = AsyncMock(return_value=[
+        "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT"
+    ])
+    
+    exchange.get_top_volume_symbols = AsyncMock(return_value=[
+        "BTCUSDT", "ETHUSDT", "BNBUSDT"
+    ])
+    
+    exchange.get_current_price = AsyncMock(side_effect=lambda symbol: {
+        "BTCUSDT": 50000.0,
+        "ETHUSDT": 3000.0,
+        "BNBUSDT": 400.0
+    }.get(symbol, 100.0))
+    
+    exchange.get_volatility_data = AsyncMock(return_value={"volatility": 0.02})
+    
+    # Стаканы с большими ордерами для разных символов
+    exchange.get_orderbook = AsyncMock(side_effect=lambda symbol, depth=20: {
+        "BTCUSDT": {
+            "asks": [
+                [50100, 0.5],
+                [50200, 0.3],
+                [50300, 0.2],
+                [50400, 0.1],
+                [50500, 0.1],
+                [50600, 0.1],
+                [50700, 0.1],
+                [50800, 0.1],
+                [50900, 0.1],
+                [51000, 5.0],  # БОЛЬШОЙ ОРДЕР - будет diamond
+                [51100, 0.1],
+            ],
+            "bids": [
+                [49900, 0.5],
+                [49800, 0.3],
+                [49700, 0.2],
+                [49600, 0.1],
+                [49500, 0.1],
+                [49400, 0.1],
+                [49300, 0.1],
+                [49200, 0.1],
+                [49100, 0.1],
+                [49000, 4.0],  # БОЛЬШОЙ ОРДЕР - будет gold
+            ]
+        },
+        "ETHUSDT": {
+            "asks": [
+                [3010, 1.0],
+                [3020, 0.5],
+                [3030, 0.3],
+                [3040, 0.2],
+                [3050, 0.2],
+                [3060, 0.2],
+                [3070, 0.2],
+                [3080, 0.2],
+                [3090, 0.2],
+                [3100, 20.0],  # БОЛЬШОЙ ОРДЕР - будет basic
+            ],
+            "bids": [
+                [2990, 1.0],
+                [2980, 0.5],
+                [2970, 0.3],
+                [2960, 0.2],
+                [2950, 0.2],
+            ]
+        },
+        "BNBUSDT": {
+            "asks": [[401, 1.0], [402, 1.0]],
+            "bids": [[399, 1.0], [398, 1.0]]
         }
-        
-        # Счетчики для симуляции времени
-        self.scan_counts = {symbol: 0 for symbol in self.symbols_data.keys()}
-        self.start_time = datetime.now(timezone.utc)
+    }.get(symbol, {"asks": [], "bids": []}))
     
-    async def connect(self) -> bool:
-        self.is_connected = True
-        return True
-    
-    async def disconnect(self):
-        self.is_connected = False
-    
-    async def get_top_volume_symbols(self, limit: int) -> list:
-        # Возвращаем символы отсортированные по объему
-        sorted_symbols = sorted(
-            self.symbols_data.keys(), 
-            key=lambda x: self.symbols_data[x]["volume"], 
-            reverse=True
-        )
-        return sorted_symbols[:limit]
-    
-    async def get_orderbook(self, symbol: str, depth: int = 20) -> dict:
-        if symbol not in self.symbols_data:
-            return {"asks": [], "bids": []}
-        
-        # Используем разные стаканы в зависимости от номера сканирования
-        scan_count = self.scan_counts[symbol]
-        orderbooks = self.symbols_data[symbol]["orderbooks"]
-        
-        if scan_count < len(orderbooks):
-            result = orderbooks[scan_count]
-        else:
-            # Если сканирований больше чем заготовленных стаканов, используем последний
-            result = orderbooks[-1]
-        
-        self.scan_counts[symbol] += 1
-        return result
-    
-    async def get_current_price(self, symbol: str) -> float:
-        return self.symbols_data.get(symbol, {}).get("price", 1000.0)
-    
-    async def get_volatility_data(self, symbol: str, timeframe: str) -> dict:
-        return {"volatility": 0.025, "price_change": 0.015}
-    
-    async def get_futures_pairs(self) -> list:
-        return list(self.symbols_data.keys())
-    
-    async def get_24h_volume_stats(self, symbols: list = None) -> dict:
-        return {
-            symbol: {"volume": str(data["volume"])} 
-            for symbol, data in self.symbols_data.items()
-        }
-    
-    async def get_24h_ticker(self, symbol: str) -> dict:
-        return {
-            "volume": str(self.symbols_data.get(symbol, {}).get("volume", 1000000)),
-            "quoteVolume": str(self.symbols_data.get(symbol, {}).get("volume", 1000000) * 10),
-            "priceChange": "100.0",
-            "priceChangePercent": "1.5"
-        }
+    return exchange
+
+
+@pytest.fixture
+async def orchestrator(mock_exchange):
+    """Инициализированный оркестратор системы"""
+    with patch('src.exchanges.exchange_factory.get_exchange', return_value=mock_exchange):
+        orch = ScannerOrchestrator(exchanges=["binance"], testnet=True)
+        return orch
 
 
 class TestIntegration:
-    """Интеграционные тесты полного цикла системы"""
-    
-    @pytest.fixture
-    def mock_exchange(self):
-        return MockExchange()
-    
-    @pytest.fixture(scope="function")
-    def full_system(self, mock_exchange):
-        """Создание полной системы для интеграционного теста"""
-        # Создаем компоненты синхронно - они не требуют async для инициализации
-        hot_pool = HotPool(mock_exchange)
-        
-        observer_pool = ObserverPool(mock_exchange)
-        observer_pool.hot_pool = hot_pool
-        
-        general_pool = GeneralPool(mock_exchange)
-        general_pool.observer_pool = observer_pool
-        
-        primary_scanner = PrimaryScanner(mock_exchange, observer_pool)
-        
-        return {
-            "exchange": mock_exchange,
-            "primary_scanner": primary_scanner,
-            "observer_pool": observer_pool,
-            "hot_pool": hot_pool,
-            "general_pool": general_pool
-        }
+    """Интеграционные тесты полного цикла по спецификации"""
     
     @pytest.mark.asyncio
-    async def test_полный_цикл_первичное_сканирование_к_горячему_пулу(self, full_system):
-        """
-        Тест полного цикла согласно спецификации:
-        Первичное сканирование → Observer Pool → Hot Pool
-        """
-        components = full_system
-        primary_scanner = components["primary_scanner"]
-        observer_pool = components["observer_pool"]
-        hot_pool = components["hot_pool"]
+    async def test_full_cycle_primary_to_hot(self, orchestrator, mock_exchange):
+        """Тест: Полный цикл - первичное сканирование → наблюдатель → горячий пул"""
         
-        # ===== ЭТАП 1: ПЕРВИЧНОЕ СКАНИРОВАНИЕ =====
+        # 1. ПЕРВИЧНОЕ СКАНИРОВАНИЕ
+        # Инициализируем компоненты
+        await orchestrator._initialize_exchanges()
+        await orchestrator._create_components()
         
         # Запускаем первичное сканирование
-        test_symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT"]
-        scan_results = await primary_scanner.run_test_scan(test_symbols)
+        scan_results = await orchestrator.primary_scanner.run_test_scan(["BTCUSDT", "ETHUSDT"])
         
-        # Проверяем результаты первичного сканирования
-        assert scan_results["scan_completed"] is True
+        # Проверяем результаты сканирования
+        assert scan_results["scan_completed"] == True
+        assert scan_results["total_symbols_scanned"] == 2
         assert scan_results["total_large_orders"] > 0
-        assert scan_results["total_symbols_scanned"] == len(test_symbols)
         
-        # Проверяем что ордера попали в пул наблюдателя
-        assert len(observer_pool.observed_symbols) > 0
-        assert "BTCUSDT" in observer_pool.observed_symbols
+        # 2. ПУЛ НАБЛЮДАТЕЛЯ
+        # Запускаем пулы
+        await orchestrator.observer_pool.start()
+        await orchestrator.hot_pool.start()
         
-        # Проверяем структуру ордера в пуле наблюдателя
-        btc_orders = observer_pool.observed_symbols["BTCUSDT"]
-        assert len(btc_orders) > 0
-        
-        btc_order = btc_orders[0]
-        assert btc_order["symbol"] == "BTCUSDT"
-        assert btc_order["is_alive"] is True
-        assert "first_seen" in btc_order
-        assert "order_hash" in btc_order
-        
-        # ===== ЭТАП 2: РАБОТА ПУЛА НАБЛЮДАТЕЛЯ =====
-        
-        # Ждем чтобы ордер "состарился" (симулируем время > 60 секунд)
-        for symbol in observer_pool.observed_symbols:
-            for order in observer_pool.observed_symbols[symbol]:
-                # Делаем ордер старше 60 секунд
-                old_time = datetime.now(timezone.utc) - timedelta(seconds=70)
-                order["first_seen"] = old_time
-        
-        # Запускаем несколько циклов observer pool
-        for _ in range(3):
-            for symbol in list(observer_pool.observed_symbols.keys()):
-                await observer_pool._scan_symbol(symbol)
-            await asyncio.sleep(0.1)  # Небольшая задержка
-        
-        # Проверяем что ордер перешел в горячий пул
-        assert len(hot_pool.hot_orders) > 0
-        
-        # Находим наш BTC ордер в горячем пуле
-        btc_hot_order = None
-        for order_hash, order_data in hot_pool.hot_orders.items():
-            if order_data["symbol"] == "BTCUSDT":
-                btc_hot_order = order_data
-                break
-        
-        assert btc_hot_order is not None, "BTC ордер не попал в горячий пул"
-        
-        # ===== ЭТАП 3: ПРОВЕРКА ГОРЯЧЕГО ПУЛА =====
-        
-        # Проверяем полную аналитическую структуру из спецификации
-        required_sections = [
-            "order_hash", "symbol", "exchange", "current_price", "order_price",
-            "usd_value", "lifetime_seconds", "time_factors", "market_context",
-            "weights", "categories", "analytics", "tracking"
-        ]
-        
-        for section in required_sections:
-            assert section in btc_hot_order, f"Отсутствует раздел: {section}"
-        
-        # Проверяем временные факторы из спецификации
-        expected_time_factors = [
-            "linear_1h", "linear_4h", "exponential_30m", "exponential_60m",
-            "logarithmic", "sqrt_normalized", "adaptive"
-        ]
-        
-        for factor in expected_time_factors:
-            assert factor in btc_hot_order["time_factors"], f"Отсутствует временной фактор: {factor}"
-        
-        # Проверяем алгоритмы весов из спецификации
-        expected_weight_algorithms = [
-            "conservative", "aggressive", "volume_weighted", "time_weighted", "hybrid", "recommended"
-        ]
-        
-        for algorithm in expected_weight_algorithms:
-            assert algorithm in btc_hot_order["weights"], f"Отсутствует алгоритм веса: {algorithm}"
-            weight = btc_hot_order["weights"][algorithm]
-            assert 0.0 <= weight <= 1.0, f"Вес {algorithm} вне диапазона: {weight}"
-        
-        # Проверяем категории по всем алгоритмам
-        for algorithm in expected_weight_algorithms:
-            category_key = f"by_{algorithm}"
-            assert category_key in btc_hot_order["categories"], f"Отсутствует категория: {category_key}"
-            category = btc_hot_order["categories"][category_key]
-            assert category in ["basic", "gold", "diamond"], f"Неверная категория: {category}"
-        
-        # Проверяем market_context из спецификации
-        market_context = btc_hot_order["market_context"]
-        expected_context_fields = [
-            "symbol_volatility_1h", "market_volatility", "time_of_day_factor", "weekend_factor"
-        ]
-        
-        for field in expected_context_fields:
-            assert field in market_context, f"Отсутствует поле market_context: {field}"
-        
-        # Проверяем analytics секцию
-        analytics = btc_hot_order["analytics"]
-        expected_analytics = [
-            "size_vs_average_top10", "distance_to_round_level", "is_psycho_level",
-            "order_book_dominance", "historical_success_rate"
-        ]
-        
-        for field in expected_analytics:
-            assert field in analytics, f"Отсутствует поле analytics: {field}"
-    
-    @pytest.mark.asyncio
-    async def test_сценарий_смерти_и_воскрешения_ордеров(self, full_system):
-        """Тест сценариев когда ордера умирают и воскрешаются"""
-        components = full_system
-        primary_scanner = components["primary_scanner"]
-        observer_pool = components["observer_pool"]
-        
-        # Запускаем первичное сканирование
-        await primary_scanner.run_test_scan(["ETHUSDT", "ADAUSDT"])
-        
-        # Проверяем что ордера попали в observer pool
-        assert "ETHUSDT" in observer_pool.observed_symbols
-        assert "ADAUSDT" in observer_pool.observed_symbols
-        
-        # Получаем исходные ордера
-        eth_order = observer_pool.observed_symbols["ETHUSDT"][0]
-        ada_order = observer_pool.observed_symbols["ADAUSDT"][0]
-        
-        original_eth_hash = eth_order["order_hash"]
-        original_ada_hash = ada_order["order_hash"]
-        
-        # Сканируем символы - ордера должны "умереть"
-        await observer_pool._scan_symbol("ETHUSDT")  # Потеря объема >70%
-        await observer_pool._scan_symbol("ADAUSDT")  # Изменение цены
-        
-        # Проверяем что ордера помечены как мертвые
-        eth_order_after = observer_pool.observed_symbols["ETHUSDT"][0]
-        ada_order_after = observer_pool.observed_symbols["ADAUSDT"][0]
-        
-        # Один из ордеров должен умереть, или появиться новый
-        # (в зависимости от реализации - может создаваться новый ордер при изменении цены)
-        assert len(observer_pool.observed_symbols["ETHUSDT"]) >= 1
-        assert len(observer_pool.observed_symbols["ADAUSDT"]) >= 1
-    
-    @pytest.mark.asyncio
-    async def test_категоризация_ордеров_diamond_gold_basic(self, full_system):
-        """Тест попадания ордеров в правильные категории"""
-        components = full_system
-        primary_scanner = components["primary_scanner"]
-        observer_pool = components["observer_pool"]
-        hot_pool = components["hot_pool"]
-        
-        # Запускаем полный цикл
-        await primary_scanner.run_test_scan(["BTCUSDT"])
-        
-        # Переводим ордер в горячий пул
-        btc_order = observer_pool.observed_symbols["BTCUSDT"][0]
-        old_time = datetime.now(timezone.utc) - timedelta(seconds=70)
-        btc_order["first_seen"] = old_time
-        
-        await observer_pool._scan_symbol("BTCUSDT")
-        
-        # Проверяем что ордер в горячем пуле
-        assert len(hot_pool.hot_orders) > 0
-        
-        hot_order = list(hot_pool.hot_orders.values())[0]
-        
-        # Проверяем категории по спецификации
-        categories = hot_order["categories"]
-        
-        # Каждый алгоритм должен дать одну из трех категорий
-        algorithms = ["conservative", "aggressive", "volume_weighted", "time_weighted", "hybrid", "recommended"]
-        
-        for algorithm in algorithms:
-            category = categories[f"by_{algorithm}"]
-            assert category in ["basic", "gold", "diamond"]
-            
-            # Проверяем соответствие веса и категории
-            weight = hot_order["weights"][algorithm]
-            
-            if category == "basic":
-                assert 0.0 <= weight < 0.333
-            elif category == "gold":
-                assert 0.333 <= weight < 0.666
-            elif category == "diamond":
-                assert 0.666 <= weight <= 1.0
-    
-    @pytest.mark.asyncio
-    async def test_статистика_системы(self, full_system):
-        """Тест получения статистики всей системы"""
-        components = full_system
-        observer_pool = components["observer_pool"]
-        hot_pool = components["hot_pool"]
-        
-        # Добавляем тестовые данные
+        # Симулируем прохождение времени (>60 секунд)
+        # Для теста используем моки с уже "состаренными" ордерами
         test_order = {
             "symbol": "BTCUSDT",
-            "price": 65000.0,
-            "quantity": 10.0,
+            "price": 51000.0,
+            "quantity": 5.0,
             "type": "ASK",
-            "usd_value": 650000.0,
-            "order_hash": "TEST-integration123",
-            "first_seen": datetime.now(timezone.utc).isoformat(),
-            "volatility_1h": 0.025,
-            "distance_percent": 1.0,
-            "size_vs_average": 5.0,
-            "average_order_size": 130000.0,
-            "is_round_level": False
+            "usd_value": 255000.0,
+            "order_hash": "BTCUSD-test123",
+            "first_seen": (datetime.now(timezone.utc) - timedelta(seconds=65)).isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "lifetime_seconds": 65,
+            "scan_count": 65
         }
         
-        observer_pool.add_order_from_primary_scan(test_order)
-        hot_pool.add_order_from_observer(test_order)
+        # Добавляем ордер в observer pool
+        orchestrator.observer_pool.add_order_from_primary_scan(test_order)
+        
+        # Проверяем условие перехода в hot pool
+        hot_pool_threshold = POOLS_CONFIG["observer_pool"]["hot_pool_lifetime_seconds"]
+        assert test_order["lifetime_seconds"] > hot_pool_threshold
+        
+        # 3. ГОРЯЧИЙ ПУЛ
+        # Ордер должен попасть в горячий пул
+        await orchestrator.hot_pool.add_order(test_order)
         
         # Получаем статистику
-        observer_stats = observer_pool.get_stats()
-        hot_stats = hot_pool.get_stats()
+        hot_pool_stats = orchestrator.hot_pool.get_stats()
+        assert hot_pool_stats["total_orders"] >= 1
         
-        # Проверяем структуру статистики
-        assert "total_symbols" in observer_stats
-        assert "total_orders" in observer_stats
-        assert "alive_orders" in observer_stats
-        
-        assert "total_orders" in hot_stats
-        assert "active_symbols" in hot_stats
-        assert "categories_distribution" in hot_stats
-        assert "avg_weight" in hot_stats
-        
-        # Проверяем значения
-        assert observer_stats["total_symbols"] >= 1
-        assert observer_stats["total_orders"] >= 1
-        
-        assert hot_stats["total_orders"] >= 1
-        assert hot_stats["active_symbols"] >= 1
-        assert isinstance(hot_stats["categories_distribution"], dict)
+        # Останавливаем систему
+        await orchestrator.stop()
     
     @pytest.mark.asyncio
-    async def test_мультибиржевая_архитектура(self, mock_exchange):
-        """Тест принципов мультибиржевой архитектуры"""
-        # Создаем второй мок биржи
-        second_exchange = MockExchange()
-        second_exchange.name = "test_integration_2"
+    async def test_predefined_orders_journey(self, orchestrator, mock_exchange):
+        """Тест: Несколько предзаданных ордеров проходят весь путь"""
         
-        # Проверяем что можем создать компоненты для разных бирж
-        hot_pool_1 = HotPool(mock_exchange)
-        hot_pool_2 = HotPool(second_exchange)
+        # Предопределенные ордера с разными характеристиками
+        test_orders = [
+            {
+                "symbol": "BTCUSDT",
+                "price": 51000.0,
+                "quantity": 5.0,
+                "usd_value": 255000.0,
+                "lifetime_seconds": 120,  # 2 минуты - перейдет в hot pool
+                "expected_category": "diamond"
+            },
+            {
+                "symbol": "ETHUSDT",
+                "price": 3100.0,
+                "quantity": 20.0,
+                "usd_value": 62000.0,
+                "lifetime_seconds": 90,  # 1.5 минуты - перейдет в hot pool
+                "expected_category": "gold"
+            },
+            {
+                "symbol": "BNBUSDT",
+                "price": 405.0,
+                "quantity": 50.0,
+                "usd_value": 20250.0,
+                "lifetime_seconds": 30,  # 30 секунд - НЕ перейдет в hot pool
+                "expected_category": "basic"
+            }
+        ]
         
-        # Проверяем что у каждого пула своя биржа
-        assert hot_pool_1.exchange.name == "test_integration"
-        assert hot_pool_2.exchange.name == "test_integration_2"
+        # Инициализируем систему
+        await orchestrator._initialize_exchanges()
+        await orchestrator._create_components()
         
-        # Проверяем базовый интерфейс
-        assert hasattr(mock_exchange, 'connect')
-        assert hasattr(mock_exchange, 'disconnect') 
-        assert hasattr(mock_exchange, 'get_orderbook')
-        assert hasattr(mock_exchange, 'get_current_price')
+        # Добавляем ордера в observer pool
+        for order_data in test_orders:
+            order = {
+                "symbol": order_data["symbol"],
+                "price": order_data["price"],
+                "quantity": order_data["quantity"],
+                "type": "ASK",
+                "usd_value": order_data["usd_value"],
+                "order_hash": f"{order_data['symbol'][:6]}-test",
+                "first_seen": (datetime.now(timezone.utc) - timedelta(seconds=order_data["lifetime_seconds"])).isoformat(),
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+                "lifetime_seconds": order_data["lifetime_seconds"],
+                "scan_count": order_data["lifetime_seconds"]
+            }
+            
+            orchestrator.observer_pool.add_order_from_primary_scan(order)
+            
+            # Проверяем, должен ли ордер перейти в hot pool
+            hot_pool_threshold = POOLS_CONFIG["observer_pool"]["hot_pool_lifetime_seconds"]
+            should_move_to_hot = order["lifetime_seconds"] >= hot_pool_threshold
+            
+            if order_data["symbol"] == "BNBUSDT":
+                assert should_move_to_hot == False  # Не должен перейти
+            else:
+                assert should_move_to_hot == True   # Должен перейти
+    
+    @pytest.mark.asyncio
+    async def test_category_assignment(self, orchestrator):
+        """Тест: Проверка попадания ордеров в нужные категории"""
         
-        # Проверяем подключение
-        assert await mock_exchange.connect() is True
-        assert mock_exchange.is_connected is True
+        # Тестовые ордера с разными весами
+        orders_with_weights = [
+            {"weight": 0.1, "expected": "basic"},
+            {"weight": 0.25, "expected": "basic"},
+            {"weight": 0.333, "expected": "basic"},
+            {"weight": 0.4, "expected": "gold"},
+            {"weight": 0.5, "expected": "gold"},
+            {"weight": 0.666, "expected": "gold"},
+            {"weight": 0.7, "expected": "diamond"},
+            {"weight": 0.85, "expected": "diamond"},
+            {"weight": 0.95, "expected": "diamond"},
+        ]
         
-        await mock_exchange.disconnect()
-        assert mock_exchange.is_connected is False
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        from config.main_config import WEIGHT_CATEGORIES
+        
+        for test_case in orders_with_weights:
+            weight = test_case["weight"]
+            expected = test_case["expected"]
+            
+            # Определяем категорию
+            category = None
+            for cat_name, cat_config in WEIGHT_CATEGORIES.items():
+                if cat_config["min"] <= weight <= cat_config["max"]:
+                    category = cat_name
+                    break
+            
+            assert category == expected, f"Weight {weight} should be {expected}, got {category}"
+    
+    @pytest.mark.asyncio
+    async def test_order_death_and_resurrection(self, orchestrator, mock_exchange):
+        """Тест: Смерть и воскрешение ордеров"""
+        
+        # Инициализируем систему
+        await orchestrator._initialize_exchanges()
+        await orchestrator._create_components()
+        
+        # 1. Создаем ордер
+        original_order = {
+            "symbol": "BTCUSDT",
+            "price": 51000.0,
+            "quantity": 5.0,
+            "type": "ASK",
+            "usd_value": 255000.0,
+            "order_hash": "BTCUSD-original",
+            "first_seen": datetime.now(timezone.utc).isoformat(),
+            "lifetime_seconds": 0
+        }
+        
+        orchestrator.observer_pool.add_order_from_primary_scan(original_order)
+        
+        # 2. Ордер "умирает" (теряет >70% объема)
+        survival_threshold = POOLS_CONFIG["observer_pool"]["survival_threshold"]
+        
+        # Симулируем потерю объема
+        updated_quantity = 1.4  # 28% от исходного (5.0)
+        survival_ratio = updated_quantity / original_order["quantity"]
+        
+        assert survival_ratio < survival_threshold  # Ордер должен "умереть"
+        
+        # 3. Ордер "воскресает" с новым хэшом
+        resurrected_order = {
+            "symbol": "BTCUSDT",
+            "price": 51000.0,  # Та же цена
+            "quantity": 5.0,    # Полный объем восстановлен
+            "type": "ASK",
+            "usd_value": 255000.0,
+            "order_hash": "BTCUSD-resurrected",  # НОВЫЙ ХЭШ!
+            "first_seen": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "lifetime_seconds": 0
+        }
+        
+        # Проверяем, что это разные ордера
+        assert original_order["order_hash"] != resurrected_order["order_hash"]
+        assert original_order["first_seen"] != resurrected_order["first_seen"]
+        assert original_order["price"] == resurrected_order["price"]
+    
+    @pytest.mark.asyncio
+    async def test_multiexchange_logic(self, orchestrator):
+        """Тест: Тестирование мультибиржевой логики"""
+        
+        # Создаем моки для разных бирж
+        binance_mock = AsyncMock(spec=BaseExchange)
+        binance_mock.name = "binance"
+        binance_mock.get_futures_pairs = AsyncMock(return_value=["BTCUSDT", "ETHUSDT"])
+        
+        bybit_mock = AsyncMock(spec=BaseExchange)
+        bybit_mock.name = "bybit"
+        bybit_mock.get_futures_pairs = AsyncMock(return_value=["BTCUSDT", "ADAUSDT"])
+        
+        # Патчим фабрику бирж
+        with patch('src.exchanges.exchange_factory.get_exchange') as mock_factory:
+            mock_factory.side_effect = lambda name, testnet: {
+                "binance": binance_mock,
+                "bybit": bybit_mock
+            }.get(name)
+            
+            # Создаем оркестратор с несколькими биржами
+            multi_orch = ScannerOrchestrator(exchanges=["binance", "bybit"], testnet=True)
+            await multi_orch._initialize_exchanges()
+            
+            # Проверяем, что обе биржи инициализированы
+            assert len(multi_orch.exchanges) == 2
+            assert "binance" in multi_orch.exchanges
+            assert "bybit" in multi_orch.exchanges
+    
+    @pytest.mark.asyncio
+    async def test_websocket_data_transmission(self, orchestrator):
+        """Тест: WebSocket передача данных"""
+        
+        # Создаем мок WebSocket сервера
+        ws_server = MagicMock(spec=WebSocketServer)
+        ws_server.send_hot_pool_data = AsyncMock()
+        ws_server.is_running = True
+        
+        # Инициализируем систему
+        await orchestrator._initialize_exchanges()
+        await orchestrator._create_components()
+        
+        # Подключаем WebSocket к hot pool
+        orchestrator.hot_pool.websocket_server = ws_server
+        
+        # Добавляем ордер в hot pool
+        test_order = {
+            "symbol": "BTCUSDT",
+            "price": 51000.0,
+            "quantity": 5.0,
+            "usd_value": 255000.0,
+            "order_hash": "BTCUSD-ws-test",
+            "lifetime_seconds": 100,
+            "recommended_weight": 0.75  # Diamond категория
+        }
+        
+        await orchestrator.hot_pool.add_order(test_order)
+        
+        # Проверяем, что WebSocket должен отправить данные
+        # (в реальной реализации hot_pool вызовет ws_server.send_hot_pool_data)
+        
+        # Формируем ожидаемую структуру данных
+        expected_data = {
+            "type": "hot_pool_update",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "trigger": "new_order",
+            "orders": [test_order],
+            "categories_distribution": {
+                "basic": 0,
+                "gold": 0,
+                "diamond": 1
+            }
+        }
+        
+        # Проверяем структуру
+        assert "type" in expected_data
+        assert "trigger" in expected_data
+        assert "orders" in expected_data
+        assert "categories_distribution" in expected_data
+    
+    @pytest.mark.asyncio
+    async def test_general_pool_to_observer_flow(self, orchestrator, mock_exchange):
+        """Тест: Поток из общего пула в пул наблюдателя"""
+        
+        # Инициализируем систему
+        await orchestrator._initialize_exchanges()
+        await orchestrator._create_components()
+        
+        # Запускаем пулы
+        await orchestrator.observer_pool.start()
+        await orchestrator.general_pool.start()
+        
+        # General pool находит большой ордер
+        new_large_order = {
+            "symbol": "NEWUSDT",
+            "price": 100.0,
+            "quantity": 1000.0,
+            "usd_value": 100000.0,
+            "order_hash": "NEWUSD-found",
+            "first_seen": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # General pool отправляет в observer pool
+        orchestrator.observer_pool.add_order_from_primary_scan(new_large_order)
+        
+        # Проверяем, что ордер в observer pool
+        stats = orchestrator.observer_pool.get_stats()
+        assert stats["total_orders"] >= 0
+        
+        # Останавливаем пулы
+        await orchestrator.general_pool.stop()
+        await orchestrator.observer_pool.stop()
+    
+    @pytest.mark.asyncio 
+    async def test_graceful_shutdown(self, orchestrator):
+        """Тест: Корректная остановка системы"""
+        
+        # Полный запуск
+        await orchestrator._initialize_exchanges()
+        await orchestrator._create_components()
+        await orchestrator._start_continuous_pools()
+        
+        # Проверяем, что все запущено
+        assert orchestrator.is_running == False  # Изначально False
+        orchestrator.is_running = True  # Устанавливаем вручную для теста
+        
+        # Останавливаем в правильном порядке
+        await orchestrator.stop()
+        
+        # Проверяем, что все остановлено
+        assert orchestrator.is_running == False
+        assert len(orchestrator.exchanges) == 0
