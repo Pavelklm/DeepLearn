@@ -1,0 +1,11 @@
+{
+	"bot_name": "Backtest_BTC_EMA_Crossover",
+	"strategy_file": "ema_crossover_strategy",
+	"mode": "backtest",
+	"risk_config_file": "configs/live_default.json",
+	"backtest_params": {
+		"ticker": "BTC-USD",
+		"period": "2y",
+		"interval": "4h"
+	}
+}

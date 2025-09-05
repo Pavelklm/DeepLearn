@@ -1,0 +1,45 @@
+{
+	"trading": {
+		"max_risk_per_trade": 0.01,
+		"risk_reward_ratio": 3.0,
+		"initial_balance": 100.0,
+		"max_daily_drawdown": 0.05,
+		"max_losing_days": 3,
+		"max_consecutive_losses_per_day": 3,
+		"min_trade_usd": 10.0,
+		"max_position_multiplier": 3.0
+	},
+	"fees": {
+		"entry_fee": 0.001,
+		"tp_fee": 0.001,
+		"sl_fee": 0.001
+	},
+	"adaptive": {
+		"min_trades_for_stats": 20,
+		"max_confidence_trades": 1000,
+		"winrate_threshold": 0.33,
+		"min_aggression": 0.1,
+		"max_aggression": 40.0,
+		"base_percent_of_balance": 0.01,
+		"losing_streak_penalty": 0.8
+	},
+	"validation": {
+		"min_profit_target_pct": 0.001,
+		"max_profit_target_pct": 0.5
+	},
+	"backtest_reporting": {
+		"summary_thresholds": {
+			"excellent_return_pct": 0.1,
+			"good_return_pct": 0.0,
+			"poor_return_pct": -0.05
+		},
+		"emoji_thresholds": {
+			"winrate_fire": 0.6,
+			"winrate_good": 0.4,
+			"loss_streak_alert": 3,
+			"loss_streak_warning": 1,
+			"drawdown_high": 0.03,
+			"drawdown_medium": 0.01
+		}
+	}
+}
