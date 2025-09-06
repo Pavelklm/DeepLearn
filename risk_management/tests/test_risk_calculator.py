@@ -5,7 +5,6 @@
 import pytest
 import os
 import logging
-from copy import deepcopy
 import sys
 
 # Добавляем путь к модулям, чтобы тесты могли найти модули
@@ -36,7 +35,8 @@ def base_config() -> Config:
         max_daily_drawdown=0.05,
         max_losing_days=3,
         min_trade_usd=10.0,
-        max_position_multiplier=3.0
+        max_position_multiplier=3.0,
+        max_consecutive_losses_per_day=3
     )
     fees_conf = FeesConfig(entry_fee=0.001, tp_fee=0.001, sl_fee=0.001) # 0.1%
     adaptive_conf = AdaptiveConfig(
@@ -51,7 +51,7 @@ def base_config() -> Config:
     # ... остальные конфиги с дефолтными значениями
     validation_conf = ValidationConfig(min_profit_target_pct=0.001, max_profit_target_pct=0.5)
     summary_conf = SummaryThresholds(excellent_return_pct=0.1, good_return_pct=0.0, poor_return_pct=-0.05)
-    emoji_conf = EmojiThresholds(winrate_fire=0.6, winrate_good=0.4, loss_streak_alert=3, loss_streak_warning=1, drawdown_high=0.03, drawdown_medium=0.01)
+    emoji_conf = EmojiThresholds(winrate_fire=0.6, drawdown_low=0.01, winrate_good=0.4, loss_streak_alert=3, loss_streak_warning=1, drawdown_high=0.03, drawdown_medium=0.01)
     backtest_conf = BacktestReportingConfig(summary_thresholds=summary_conf, emoji_thresholds=emoji_conf)
 
     return Config(
@@ -105,7 +105,7 @@ class TestRiskCalculator:
         
         # WHEN
         result = calculator.calculate_position(
-            entry_price, target_tp_price, balance, empty_trade_history, suggested_sl_price
+            entry_price, target_tp_price, balance, empty_trade_history, suggested_sl_price, "BUY"
         )
         
         # THEN
@@ -130,7 +130,7 @@ class TestRiskCalculator:
         
         # WHEN
         result = calculator.calculate_position(
-            entry_price, 51000.0, balance, empty_trade_history, suggested_sl_price
+            entry_price, 51000.0, balance, empty_trade_history, suggested_sl_price, "BUY"
         )
         
         # THEN
@@ -153,7 +153,7 @@ class TestRiskCalculator:
         
         # WHEN
         result = calculator.calculate_position(
-            entry_price, target_tp_price, balance, empty_trade_history
+            entry_price, target_tp_price, balance, empty_trade_history, None, "BUY"
         )
         
         # THEN
@@ -172,7 +172,7 @@ class TestRiskCalculator:
         calculator = RiskCalculator(base_config)
         
         # WHEN
-        result = calculator.calculate_position(50000, None, 10000, empty_trade_history, None)
+        result = calculator.calculate_position(50000, None, 10000, empty_trade_history, None, "BUY")
 
         # THEN
         # Должен вернуться минимальный размер, так как сделок меньше `min_trades_for_stats`
@@ -188,7 +188,7 @@ class TestRiskCalculator:
         good_history = ([{'success': True}, {'success': False}] * 5) + ([{'success': True}] * 30)
 
         # WHEN
-        result = calculator.calculate_position(50000, None, 10000, good_history, None)
+        result = calculator.calculate_position(50000, None, 10000, good_history, None, "BUY")
 
         # THEN
         # Ожидаем, что размер будет больше базового (1% от баланса = $100)
@@ -203,10 +203,10 @@ class TestRiskCalculator:
         losing_streak_history = ([{'success': True}] * 25) + ([{'success': False}] * 5)
         
         # Считаем размер с хорошей историей для сравнения
-        good_history_size = calculator.calculate_position(50000, None, 10000, [{'success': True}] * 30, None).position_size_usd
+        good_history_size = calculator.calculate_position(50000, None, 10000, [{'success': True}] * 30, None, "BUY").position_size_usd
         
         # WHEN
-        result = calculator.calculate_position(50000, None, 10000, losing_streak_history, None)
+        result = calculator.calculate_position(50000, None, 10000, losing_streak_history, None, "BUY")
 
         # THEN
         # Размер должен быть меньше, чем при хорошей истории без лузстрика
@@ -219,7 +219,7 @@ class TestRiskCalculator:
         logger.info("ТЕСТ_СТАРТ: Обработка нулевой цены входа")
         calculator = RiskCalculator(base_config)
         with pytest.raises(ValueError, match="Entry price must be a positive number"):
-            calculator.calculate_position(0, 100, 10000, [], None)
+            calculator.calculate_position(0, 100, 10000, [], None, "BUY")
         logger.info("ТЕСТ_УСПЕШНЫЙ: ValueError корректно вызван ✓")
         
     def test_negative_profit_due_to_fees(self, base_config):
@@ -231,7 +231,7 @@ class TestRiskCalculator:
         tp = 50000.01 
         sl = 49950
 
-        result = calculator.calculate_position(entry, tp, 10000, [], sl)
+        result = calculator.calculate_position(entry, tp, 10000, [], sl, "BUY")
 
         logger.info(f"THEN: Чистая прибыль при TP: {result.tp_net_profit}")
         # Даже если цена дойдет до TP, чистая прибыль будет отрицательной

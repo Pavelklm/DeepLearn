@@ -39,13 +39,14 @@ class RiskCalculator:
                            target_tp_price: Optional[float],
                            current_balance: float,
                            trade_history: List[Dict[str, Any]],
-                           suggested_sl_price: Optional[float] = None) -> PositionCalculationResult:
+                           suggested_sl_price: Optional[float] = None,
+                           side: str = "BUY") -> PositionCalculationResult:
         """
         Главный расчет позиции. Логика зависит от предоставленных стратегией данных.
         """
         logger.info("="*50)
         logger.info(f"НАЧИНАЕМ РАСЧЕТ ПОЗИЦИИ (Баланс: ${current_balance:,.2f})")
-        logger.info(f"  Вход: {entry_price}, Целевой TP: {target_tp_price}, Предложенный SL: {suggested_sl_price}")
+        logger.info(f"  Вход: {entry_price}, Целевой TP: {target_tp_price}, Предложенный SL: {suggested_sl_price}, Направление: {side}")
 
         if not isinstance(entry_price, (int, float)) or not entry_price > 0:
             raise ValueError(f"Entry price must be a positive number, got: {entry_price}")
@@ -70,14 +71,23 @@ class RiskCalculator:
                     # Используем переданный TP, вычисляем SL для R/R
                     tp_profit_percent = abs(target_tp_price - entry_price) / entry_price
                     sl_loss_percent = tp_profit_percent / self.config.trading.risk_reward_ratio
-                    sl_price = entry_price - (entry_price * sl_loss_percent) if target_tp_price > entry_price else entry_price + (entry_price * sl_loss_percent)
+                    if side == "BUY":
+                        sl_price = entry_price - (entry_price * sl_loss_percent)
+                    else:  # SELL
+                        sl_price = entry_price + (entry_price * sl_loss_percent)
                     final_tp_price = target_tp_price
                 else:
-                    # Режим автомата - создаем стандартные уровни
-                    sl_price = entry_price * 0.98  # 2% SL
-                    final_tp_price = entry_price * 1.06  # 6% TP для R/R 3:1
+                    # Режим автомата - используем R/R из конфига
+                    sl_percent = 0.02  # 2% SL
+                    tp_percent = sl_percent * self.config.trading.risk_reward_ratio
+                    if side == "BUY":
+                        sl_price = entry_price * (1 - sl_percent)
+                        final_tp_price = entry_price * (1 + tp_percent)
+                    else:  # SELL
+                        sl_price = entry_price * (1 + sl_percent)
+                        final_tp_price = entry_price * (1 - tp_percent)
                     
-                _, _, min_profit, min_loss = self._calculate_net_pnl(entry_price, final_tp_price, sl_price, min_size)
+                _, _, min_profit, min_loss = self._calculate_net_pnl(entry_price, final_tp_price, sl_price, min_size, side)
                 
                 return PositionCalculationResult(
                     final_tp_price=final_tp_price,
@@ -92,13 +102,22 @@ class RiskCalculator:
             if target_tp_price:
                 tp_profit_percent = abs(target_tp_price - entry_price) / entry_price
                 sl_loss_percent = tp_profit_percent / self.config.trading.risk_reward_ratio
-                sl_price = entry_price - (entry_price * sl_loss_percent) if target_tp_price > entry_price else entry_price + (entry_price * sl_loss_percent)
+                if side == "BUY":
+                    sl_price = entry_price - (entry_price * sl_loss_percent)
+                else:  # SELL
+                    sl_price = entry_price + (entry_price * sl_loss_percent)
                 final_tp_price = target_tp_price
             else:
-                sl_price = entry_price * 0.98
-                final_tp_price = entry_price * 1.06
+                sl_percent = 0.02
+                tp_percent = sl_percent * self.config.trading.risk_reward_ratio
+                if side == "BUY":
+                    sl_price = entry_price * (1 - sl_percent)
+                    final_tp_price = entry_price * (1 + tp_percent)
+                else:  # SELL
+                    sl_price = entry_price * (1 + sl_percent)
+                    final_tp_price = entry_price * (1 - tp_percent)
                 
-            _, _, min_profit, min_loss = self._calculate_net_pnl(entry_price, final_tp_price, sl_price, min_size)
+            _, _, min_profit, min_loss = self._calculate_net_pnl(entry_price, final_tp_price, sl_price, min_size, side)
             
             return PositionCalculationResult(
                 final_tp_price=final_tp_price,
@@ -121,17 +140,21 @@ class RiskCalculator:
             # --- СЦЕНАРИЙ 2: Приоритет Тейк-Профита ("Целевой") ---
             logger.info("СЦЕНАРИЙ 2: Расчет от заданного TP и R/R.")
             
-            _, _, single_usd_profit, _ = self._calculate_net_pnl(entry_price, target_tp_price, 0, 1.0)
+            _, _, single_usd_profit, _ = self._calculate_net_pnl(entry_price, target_tp_price, 0, 1.0, side)
             
             required_net_loss = abs(single_usd_profit / self.config.trading.risk_reward_ratio)
             
-            fee_percent = self.config.fees.entry_fee + self.config.fees.sl_fee
+            # ИСПРАВЛЕНО: Используем правильную комиссию для TP сценария
+            fee_percent = self.config.fees.entry_fee + self.config.fees.tp_fee
             price_loss_percent = required_net_loss - fee_percent
             if price_loss_percent <= 0:
                 raise ValueError(f"Cannot achieve target R/R because required price loss ({price_loss_percent:.4%}) is covered by fees ({fee_percent:.4%}).")
 
             sl_delta = entry_price * price_loss_percent
-            sl_price = entry_price - sl_delta if target_tp_price > entry_price else entry_price + sl_delta
+            if side == "BUY":
+                sl_price = entry_price - sl_delta
+            else:  # SELL
+                sl_price = entry_price + sl_delta
             
             position_size_usd = self._calculate_size_from_risk(entry_price, sl_price, max_risk_usd)
             final_tp_price = target_tp_price
@@ -142,6 +165,10 @@ class RiskCalculator:
             
             position_size_usd = self.calculate_adaptive_position_size(trade_history, current_balance)
             
+            # ИСПРАВЛЕНО: Добавляем ограничение плеча
+            max_allowed_size = current_balance * self.config.trading.max_position_multiplier
+            position_size_usd = min(position_size_usd, max_allowed_size)
+            
             total_fee_percent = self.config.fees.entry_fee + self.config.fees.sl_fee
             risk_per_position_percent = max_risk_usd / position_size_usd if position_size_usd > 0 else 0
             price_risk_percent = risk_per_position_percent - total_fee_percent
@@ -150,10 +177,14 @@ class RiskCalculator:
                  raise ValueError(f"Risk budget per position ({risk_per_position_percent:.4%}) is smaller than fees ({total_fee_percent:.4%}).")
 
             sl_delta = entry_price * price_risk_percent
-            sl_price = entry_price - sl_delta
-            
-            tp_delta = sl_delta * self.config.trading.risk_reward_ratio
-            final_tp_price = entry_price + tp_delta
+            if side == "BUY":
+                sl_price = entry_price - sl_delta
+                tp_delta = sl_delta * self.config.trading.risk_reward_ratio
+                final_tp_price = entry_price + tp_delta
+            else:  # SELL
+                sl_price = entry_price + sl_delta
+                tp_delta = sl_delta * self.config.trading.risk_reward_ratio
+                final_tp_price = entry_price - tp_delta
 
         # --- Финальные ограничения и расчеты ---
         
@@ -162,7 +193,7 @@ class RiskCalculator:
         logger.info(f"Размер позиции после ограничений: ${position_size_usd:.2f}")
 
         _, _, actual_profit, actual_loss = self._calculate_net_pnl(
-            entry_price, final_tp_price, sl_price, position_size_usd
+            entry_price, final_tp_price, sl_price, position_size_usd, side
         )
 
         result = PositionCalculationResult(
@@ -192,8 +223,8 @@ class RiskCalculator:
         return max_risk_usd / total_risk_percent
 
     def _calculate_net_pnl(self, entry_price: float, tp_price: float, sl_price: float, 
-                           position_size_usd: float) -> Tuple[float, float, float, float]:
-        """Вспомогательная функция для расчета точных PnL с учетом комиссий."""
+                           position_size_usd: float, side: str = "BUY") -> Tuple[float, float, float, float]:
+        """Вспомогательная функция для расчета точных PnL с учетом комиссий и направления."""
         if entry_price == 0: return tp_price, sl_price, 0.0, 0.0
 
         entry = Decimal(str(entry_price))
@@ -207,18 +238,25 @@ class RiskCalculator:
         
         quantity = position_size / entry if entry > 0 else Decimal('0')
         
-        # Расчет для TP
-        gross_profit = quantity * (tp - entry)
+        # Расчет для TP (с учетом направления)
+        if side == "BUY":
+            gross_profit = quantity * (tp - entry)
+        else:  # SELL
+            gross_profit = quantity * (entry - tp)
         entry_fee_cost = position_size * entry_fee_rate
         exit_tp_value = quantity * tp
         exit_tp_fee_cost = exit_tp_value * tp_fee_rate
         net_profit = gross_profit - entry_fee_cost - exit_tp_fee_cost
         
-        # Расчет для SL
-        gross_loss = quantity * (entry - sl)
+        # Расчет для SL (ИСПРАВЛЕНО: с учетом направления)
+        if side == "BUY":
+            gross_loss_amount = abs(quantity * (entry - sl))  # Положительное значение убытка
+        else:  # SELL
+            gross_loss_amount = abs(quantity * (sl - entry))  # Положительное значение убытка
+        
         exit_sl_value = quantity * sl
         exit_sl_fee_cost = exit_sl_value * sl_fee_rate
-        net_loss = -(gross_loss + entry_fee_cost + exit_sl_fee_cost)
+        net_loss = -(gross_loss_amount + entry_fee_cost + exit_sl_fee_cost)
 
         return float(tp), float(sl), float(net_profit), float(net_loss)
     
@@ -233,9 +271,11 @@ class RiskCalculator:
             logger.info(f"Вердикт: Новичок. Размер: ${self.config.trading.min_trade_usd:.2f}")
             return self.config.trading.min_trade_usd
 
-        # ✅ ИСПРАВЛЕНИЕ: Безопасное значение по умолчанию - False
-        profitable_trades = sum(1 for trade in trade_history if trade.get('success', False))
-        current_winrate = profitable_trades / total_trades if total_trades > 0 else 0
+        # ИСПРАВЛЕНО: Пропускаем записи без явного поля success
+        valid_trades = [trade for trade in trade_history if 'success' in trade]
+        profitable_trades = sum(1 for trade in valid_trades if trade['success'])
+        total_valid_trades = len(valid_trades)
+        current_winrate = profitable_trades / total_valid_trades if total_valid_trades > 0 else 0
         
         if current_winrate < self.config.adaptive.winrate_threshold:
             logger.info(f"Вердикт: Низкий винрейт. Размер: ${self.config.trading.min_trade_usd:.2f}")
@@ -252,13 +292,13 @@ class RiskCalculator:
         core_multiplier = 1.0 + performance_score * dynamic_aggression
         
         winning_streak = 0
-        for trade in reversed(trade_history):
-            if trade.get('success', False): winning_streak += 1
+        for trade in reversed(valid_trades):
+            if trade['success']: winning_streak += 1
             else: break
             
         losing_streak = 0
-        for trade in reversed(trade_history):
-            if not trade.get('success', False): losing_streak += 1
+        for trade in reversed(valid_trades):
+            if not trade['success']: losing_streak += 1
             else: break
 
         winstreak_multiplier = 1.0 + pow(winning_streak, 1.4) * 0.15

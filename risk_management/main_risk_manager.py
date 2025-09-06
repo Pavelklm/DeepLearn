@@ -127,7 +127,7 @@ class RiskManager:
         }
 
     def calculate_trade_parameters(
-        self, entry_price: float, target_tp_price: Optional[float], suggested_sl_price: Optional[float]
+        self, entry_price: float, target_tp_price: Optional[float], suggested_sl_price: Optional[float], side: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Вызывает RiskCalculator с полным набором параметров для получения деталей сделки.
@@ -138,16 +138,21 @@ class RiskManager:
             for t in self.performance_tracker.trade_history
         ]
         
+        # ИСПРАВЛЕНО: Определяем направление сделки правильно
+        if side is None:
+            final_tp_for_side_check = target_tp_price or entry_price * 1.02  # Дефолт: лонг
+            side = "BUY" if final_tp_for_side_check > entry_price else "SELL"
+        
         position = self.risk_calculator.calculate_position(
             entry_price=entry_price,
             target_tp_price=target_tp_price,
             current_balance=balance,
             trade_history=trade_history,
-            suggested_sl_price=suggested_sl_price
+            suggested_sl_price=suggested_sl_price,
+            side=side
         )
         
         final_tp_for_side_check = target_tp_price or position.final_tp_price
-        side = "BUY" if final_tp_for_side_check > entry_price else "SELL"
         quantity = position.position_size_usd / entry_price if entry_price else 0.0
         
         return {
@@ -171,6 +176,7 @@ class RiskManager:
         target_tp_price: Optional[float], 
         symbol: str = "BTCUSDT",
         suggested_sl_price: Optional[float] = None,
+        side: Optional[str] = None,
         timestamp: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -186,7 +192,7 @@ class RiskManager:
         if not allowed_info["trade_allowed"]:
             return {"trade_allowed": False, "order_placed": False, "reason": "; ".join(allowed_info["reasons"])}
 
-        trade_params = self.calculate_trade_parameters(entry_price, target_tp_price, suggested_sl_price)
+        trade_params = self.calculate_trade_parameters(entry_price, target_tp_price, suggested_sl_price, side)
         
         order_id = f"{self.mode}_{int(time.time() * 1000)}"
         trade_result = {
