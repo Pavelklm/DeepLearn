@@ -24,6 +24,8 @@ class TradingConfig:
     max_position_multiplier: float
     max_risk_per_trade: float
     max_consecutive_losses_per_day: int
+    max_consecutive_losses_global: int
+    default_sl_percent: float
 
 @dataclass
 class FeesConfig:
@@ -185,10 +187,16 @@ class ConfigManager:
             raise ConfigValidationError("max_daily_drawdown должно быть от 0 до 1")
         if config.trading.max_losing_days < 1:
             raise ConfigValidationError("max_losing_days должно быть больше 0")
+        if config.trading.max_consecutive_losses_global < 1:
+            raise ConfigValidationError("max_consecutive_losses_global должно быть больше 0")
+        if config.trading.max_consecutive_losses_global <= config.trading.max_consecutive_losses_per_day:
+            raise ConfigValidationError("max_consecutive_losses_global должно быть больше max_consecutive_losses_per_day")
         if config.trading.min_trade_usd <= 0:
             raise ConfigValidationError("min_trade_usd должно быть больше 0")
         if config.trading.max_position_multiplier <= 0:
             raise ConfigValidationError("max_position_multiplier должно быть больше 0")
+        if not 0.001 <= config.trading.default_sl_percent <= 0.1:
+            raise ConfigValidationError("default_sl_percent должно быть от 0.1% до 10%")
 
         # Проверяем комиссии
         if not 0 <= config.fees.entry_fee <= 1:

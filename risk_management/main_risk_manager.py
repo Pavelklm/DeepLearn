@@ -143,6 +143,19 @@ class RiskManager:
             final_tp_for_side_check = target_tp_price or entry_price * 1.02  # Дефолт: лонг
             side = "BUY" if final_tp_for_side_check > entry_price else "SELL"
         
+        # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убедимся что все параметры логически согласованы с определенным направлением
+        if suggested_sl_price is not None:
+            if side == "BUY" and suggested_sl_price >= entry_price:
+                raise ValueError(
+                    f"Invalid SL for {side} trade: SL price ({suggested_sl_price}) must be below entry price ({entry_price}). "
+                    f"For BUY trades, stop-loss should protect against downward price movement."
+                )
+            elif side == "SELL" and suggested_sl_price <= entry_price:
+                raise ValueError(
+                    f"Invalid SL for {side} trade: SL price ({suggested_sl_price}) must be above entry price ({entry_price}). "
+                    f"For SELL trades, stop-loss should protect against upward price movement."
+                )
+        
         position = self.risk_calculator.calculate_position(
             entry_price=entry_price,
             target_tp_price=target_tp_price,
@@ -310,6 +323,26 @@ class RiskManager:
         if suggested_sl_price is not None:
             if not isinstance(suggested_sl_price, (int, float)) or suggested_sl_price <= 0:
                 raise ValueError(f"Suggested SL price must be a positive number, got: {suggested_sl_price}")
+        
+        # НОВАЯ ВАЛИДАЦИЯ: проверка логической согласованности направления сделки
+        if target_tp_price is not None and suggested_sl_price is not None:
+            # Определяем направление по TP
+            inferred_side = "BUY" if target_tp_price > entry_price else "SELL"
+            
+            if inferred_side == "BUY":
+                if suggested_sl_price >= entry_price:
+                    raise ValueError(
+                        f"Invalid trade parameters for BUY direction: "
+                        f"SL price ({suggested_sl_price}) must be below entry price ({entry_price}). "
+                        f"Current setup would result in guaranteed loss on stop-loss execution."
+                    )
+            else:  # SELL
+                if suggested_sl_price <= entry_price:
+                    raise ValueError(
+                        f"Invalid trade parameters for SELL direction: "
+                        f"SL price ({suggested_sl_price}) must be above entry price ({entry_price}). "
+                        f"Current setup would result in guaranteed loss on stop-loss execution."
+                    )
 
         if not isinstance(symbol, str) or not symbol.strip():
             raise ValueError(f"Symbol must be a non-empty string, got: {symbol}")

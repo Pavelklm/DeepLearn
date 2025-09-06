@@ -6,8 +6,10 @@
 		"max_daily_drawdown": 0.05,
 		"max_losing_days": 3,
 		"max_consecutive_losses_per_day": 3,
+		"max_consecutive_losses_global": 6,
 		"min_trade_usd": 10.0,
-		"max_position_multiplier": 3.0
+		"max_position_multiplier": 3.0,
+		"default_sl_percent": 0.02
 	},
 	"fees": {
 		"entry_fee": 0.001,

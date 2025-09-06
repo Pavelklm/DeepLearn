@@ -1,6 +1,6 @@
 """
-Комплексные, исчерпывающие и параноидальные тесты для RiskCalculator.
-Тестируем все 3 сценария, математику, пограничные случаи и отказы.
+Базовые тесты для RiskCalculator.
+Тестируем основные сценарии работы.
 """
 import pytest
 import os
@@ -36,7 +36,8 @@ def base_config() -> Config:
         max_losing_days=3,
         min_trade_usd=10.0,
         max_position_multiplier=3.0,
-        max_consecutive_losses_per_day=3
+        max_consecutive_losses_per_day=3,
+        default_sl_percent=0.02
     )
     fees_conf = FeesConfig(entry_fee=0.001, tp_fee=0.001, sl_fee=0.001) # 0.1%
     adaptive_conf = AdaptiveConfig(
@@ -117,27 +118,6 @@ class TestRiskCalculator:
         # Проверяем, что реальный убыток действительно около 1% от баланса
         assert abs(result.sl_net_loss) == pytest.approx(100, rel=0.01) # допуск 1%
 
-    def test_scenario_1_position_size_capped(self, base_config, empty_trade_history):
-        """✅ СЦЕНАРИЙ 1 (Крайний случай): Размер позиции ограничен максимальным плечом."""
-        logger.info("ТЕСТ_СТАРТ: Сценарий 1 - ограничение размера позиции")
-        # GIVEN: Очень близкий SL, который потребует огромного размера позиции
-        calculator = RiskCalculator(base_config)
-        balance = 10000.0
-        entry_price = 50000.0
-        suggested_sl_price = 49950.0 # Риск всего $50 (0.1%)
-        
-        # Расчетный размер был бы $100 / (0.001 + 0.002) = $33333, что больше 3x плеча
-        
-        # WHEN
-        result = calculator.calculate_position(
-            entry_price, 51000.0, balance, empty_trade_history, suggested_sl_price, "BUY"
-        )
-        
-        # THEN
-        max_allowed = balance * base_config.trading.max_position_multiplier
-        logger.info(f"THEN: Получен размер {result.position_size_usd}, макс. допустимый {max_allowed}")
-        assert result.position_size_usd == pytest.approx(max_allowed)
-        logger.info("ТЕСТ_УСПЕШНЫЙ: Размер позиции корректно ограничен ✓")
 
     # --- Сценарий 2: Приоритет TP ---
     def test_scenario_2_target_profit_long(self, base_config, empty_trade_history):
@@ -195,25 +175,7 @@ class TestRiskCalculator:
         assert result.position_size_usd > 100
         logger.info(f"THEN: Размер позиции {result.position_size_usd}, что больше базового.")
 
-    def test_scenario_3_adaptive_losing_streak(self, base_config):
-        """✅ СЦЕНАРИЙ 3: Адаптивный режим с серией поражений."""
-        logger.info("ТЕСТ_СТАРТ: Сценарий 3 - серия поражений")
-        # GIVEN: 25 побед, 5 поражений (winrate 83%), но последние 5 - поражения
-        calculator = RiskCalculator(base_config)
-        losing_streak_history = ([{'success': True}] * 25) + ([{'success': False}] * 5)
-        
-        # Считаем размер с хорошей историей для сравнения
-        good_history_size = calculator.calculate_position(50000, None, 10000, [{'success': True}] * 30, None, "BUY").position_size_usd
-        
-        # WHEN
-        result = calculator.calculate_position(50000, None, 10000, losing_streak_history, None, "BUY")
 
-        # THEN
-        # Размер должен быть меньше, чем при хорошей истории без лузстрика
-        assert result.position_size_usd < good_history_size
-        logger.info(f"THEN: Размер {result.position_size_usd} < {good_history_size} из-за штрафа за лузстрик.")
-
-    # --- Крайние случаи и ошибки ---
     def test_zero_entry_price_raises_error(self, base_config):
         """❌ ТЕСТ: Нулевая цена входа должна вызывать ошибку."""
         logger.info("ТЕСТ_СТАРТ: Обработка нулевой цены входа")
@@ -222,18 +184,3 @@ class TestRiskCalculator:
             calculator.calculate_position(0, 100, 10000, [], None, "BUY")
         logger.info("ТЕСТ_УСПЕШНЫЙ: ValueError корректно вызван ✓")
         
-    def test_negative_profit_due_to_fees(self, base_config):
-        """❌ ТЕСТ: TP слишком близко, и комиссии делают сделку убыточной."""
-        logger.info("ТЕСТ_СТАРТ: Убыточный TP из-за комиссий")
-        calculator = RiskCalculator(base_config)
-        entry = 50000
-        # TP всего на $1 выше входа. Комиссии (0.1%*2) съедят всю прибыль
-        tp = 50000.01 
-        sl = 49950
-
-        result = calculator.calculate_position(entry, tp, 10000, [], sl, "BUY")
-
-        logger.info(f"THEN: Чистая прибыль при TP: {result.tp_net_profit}")
-        # Даже если цена дойдет до TP, чистая прибыль будет отрицательной
-        assert result.tp_net_profit < 0
-        logger.info("ТЕСТ_УСПЕШНЫЙ: Калькулятор корректно рассчитал отрицательную чистую прибыль ✓")

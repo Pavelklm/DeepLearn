@@ -43,6 +43,8 @@ class PerformanceTracker:
         self.config = config
         self.trade_history: List[TradeResult] = []
         self.daily_stats: Dict[str, DailyStats] = {}
+        # Глобальный счетчик убыточных сделок подряд
+        self.consecutive_losses_global = 0
         logger.info("PerformanceTracker (in-memory) инициализирован.")
 
     def update_trade_statistics(self, trade_result: Dict[str, Any]) -> None:
@@ -58,6 +60,12 @@ class PerformanceTracker:
             trade_type=trade_result.get('trade_type', 'UNKNOWN')
         )
         self.trade_history.append(trade)
+
+        # Обновляем глобальный счетчик убытков
+        if trade.success:
+            self.consecutive_losses_global = 0  # Сброс при прибыльной сделке
+        else:
+            self.consecutive_losses_global += 1  # Увеличиваем при убытке
 
         trade_date = datetime.fromisoformat(trade.timestamp).date().isoformat()
         # Если для этой даты еще нет статистики, создаем ее
@@ -77,11 +85,15 @@ class PerformanceTracker:
             # Убыточная сделка увеличивает счетчик за день
             daily_stat.consecutive_losses += 1
 
+        # Логирование с дополнительной информацией о скользящих 24 часах
+        consecutive_losses_24h = self.get_consecutive_losses_last_24h()
         logger.info(
             f"Статистика за {trade_date} обновлена: "
             f"Прибыль={daily_stat.total_profit:.2f}, "
             f"Сделок={daily_stat.trades_count}, "
-            f"Убытков подряд за день={daily_stat.consecutive_losses}"
+            f"Убытков подряд за день={daily_stat.consecutive_losses}, "
+            f"Убытков подряд 24ч={consecutive_losses_24h}, "
+            f"Убытков подряд глобально={self.consecutive_losses_global}"
         )
 
     def get_daily_drawdown(self, target_date: Optional[str] = None) -> float:
@@ -112,6 +124,34 @@ class PerformanceTracker:
         
         daily_stat = self.daily_stats.get(target_date)
         return daily_stat.consecutive_losses if daily_stat else 0
+
+    def get_consecutive_losses_last_24h(self) -> int:
+        """
+        [КРИТИЧЕСКИЙ ФИКС] Возвращает количество убыточных сделок подряд за последние 24 часа.
+        Использует скользящее окно вместо календарного дня.
+        """
+        if not self.trade_history:
+            return 0
+            
+        now = datetime.now()
+        cutoff_time = now.timestamp() - 24 * 60 * 60  # 24 часа назад
+        
+        consecutive_losses = 0
+        # Итерируем по истории сделок в обратном порядке (от новых к старым)
+        for trade in reversed(self.trade_history):
+            trade_timestamp = datetime.fromisoformat(trade.timestamp).timestamp()
+            
+            # Если сделка старше 24 часов, прекращаем поиск
+            if trade_timestamp < cutoff_time:
+                break
+                
+            # Если встретили прибыльную сделку, серия прерывается
+            if trade.success:
+                break
+            else:
+                consecutive_losses += 1
+                
+        return consecutive_losses
 
     def _count_consecutive_serious_problem_days(self) -> int:
         """
@@ -162,12 +202,30 @@ class PerformanceTracker:
             result['reasons'].append(f"Дневная просадка {drawdown:.2%} превысила лимит {self.config.trading.max_daily_drawdown:.2%}")
             
         # УРОВЕНЬ 2: Проверка на убыточные сделки подряд за день (например, 3)
-        consecutive_losses = self.get_daily_consecutive_losses(today_str)
+        consecutive_losses_daily = self.get_daily_consecutive_losses(today_str)
+        consecutive_losses_24h = self.get_consecutive_losses_last_24h()  # КРИТИЧЕСКИЙ ФИКС
         limit_consecutive = self.config.trading.max_consecutive_losses_per_day
+        
+        # Используем максимум из календарного дня и скользящих 24 часов
+        consecutive_losses = max(consecutive_losses_daily, consecutive_losses_24h)
+        
         if consecutive_losses >= limit_consecutive:
             result['trade_allowed'] = False
             result['violated_limits'].append('consecutive_losses_per_day')
-            result['reasons'].append(f"Достигнут лимит убыточных сделок подряд за день: {consecutive_losses}/{limit_consecutive}")
+            result['reasons'].append(
+                f"Достигнут лимит убыточных сделок подряд: {consecutive_losses}/{limit_consecutive} "
+                f"(календарный день: {consecutive_losses_daily}, скользящие 24ч: {consecutive_losses_24h})"
+            )
+
+        # НОВЫЙ УРОВЕНЬ: Проверка на глобальные убыточные сделки подряд
+        global_limit = self.config.trading.max_consecutive_losses_global
+        if self.consecutive_losses_global >= global_limit:
+            result['trade_allowed'] = False
+            result['violated_limits'].append('consecutive_losses_global')
+            result['reasons'].append(
+                f"КРИТИЧЕСКИЙ УБЫТОК: {self.consecutive_losses_global} убыточных сделок подряд "
+                f"(лимит: {global_limit}). Бот остановлен!"
+            )
 
         # УРОВЕНЬ 3: ИСПРАВЛЕНО - Проверка на серьезные проблемы несколько дней подряд
         serious_problem_days = self._count_consecutive_serious_problem_days()
@@ -198,4 +256,6 @@ class PerformanceTracker:
             'losing_trades': total_trades - winning_trades,
             'winrate': (winning_trades / total_trades) if total_trades > 0 else 0.0,
             'total_profit': total_profit,
+            'consecutive_losses_global': self.consecutive_losses_global,
+            'consecutive_losses_last_24h': self.get_consecutive_losses_last_24h(),  # КРИТИЧЕСКИЙ ФИКС
         }
