@@ -9,7 +9,7 @@ class Strategy(BaseStrategy):
     Теперь она принимает параметры динамически.
     """
     # ИЗМЕНЕНИЕ: Принимаем параметры в конструкторе
-    def __init__(self, fast_ema_period=50, slow_ema_period=154, tp_multiplier=1.012191937845144):
+    def __init__(self, fast_ema_period=7, slow_ema_period=25, tp_multiplier=1.197):
         self._name = f"EMA Crossover ({fast_ema_period}/{slow_ema_period})"
         self.fast_ema_period = fast_ema_period
         self.slow_ema_period = slow_ema_period

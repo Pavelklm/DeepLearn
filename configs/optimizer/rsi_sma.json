@@ -1,0 +1,30 @@
+{
+	"strategy_file": "rsi_sma_strategy",
+	"parameters": [
+		{
+			"name": "rsi_period",
+			"type": "int",
+			"low": 7,
+			"high": 25
+		},
+		{
+			"name": "sma_period",
+			"type": "int",
+			"low": 50,
+			"high": 200
+		},
+		{
+			"name": "oversold_level",
+			"type": "int",
+			"low": 20,
+			"high": 40
+		},
+		{
+			"name": "tp_multiplier",
+			"type": "float",
+			"low": 1.02,
+			"high": 1.15,
+			"step": 0.005
+		}
+	]
+}

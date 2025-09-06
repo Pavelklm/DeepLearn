@@ -1,12 +1,18 @@
 import sqlite3
 from typing import Dict, Any
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    def __init__(self, db_path='trading_database.db'):
+    def __init__(self, db_path='database/trading_database.db'):
         try:
+
+            db_dir = os.path.dirname(db_path)
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir)
+    
             self.conn = sqlite3.connect(db_path, check_same_thread=False)
             self.create_tables()
         except sqlite3.Error as e:

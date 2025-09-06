@@ -1,0 +1,49 @@
+{
+  "strategy_file": "bb_macd_atr_strategy",
+  "parameters": [
+    {
+      "name": "bb_period",
+      "type": "int",
+      "low": 15,
+      "high": 30
+    },
+    {
+      "name": "bb_std_dev",
+      "type": "float",
+      "low": 1.8,
+      "high": 2.5,
+      "step": 0.1
+    },
+    {
+      "name": "macd_fast",
+      "type": "int",
+      "low": 8,
+      "high": 16
+    },
+    {
+      "name": "macd_slow",
+      "type": "int",
+      "low": 20,
+      "high": 35
+    },
+    {
+      "name": "macd_signal",
+      "type": "int",
+      "low": 7,
+      "high": 12
+    },
+    {
+      "name": "atr_period",
+      "type": "int",
+      "low": 10,
+      "high": 20
+    },
+    {
+      "name": "tp_atr_multiplier",
+      "type": "float",
+      "low": 1.5,
+      "high": 5.0,
+      "step": 0.25
+    }
+  ]
+}

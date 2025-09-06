@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from risk_management.performance_tracker import PerformanceTracker
-from analytics.metrics_calculator import MetricsCalculator, PerformanceMetrics
+from analytics.metrics_calculator import MetricsCalculator
 
 
 class BacktestReporter:

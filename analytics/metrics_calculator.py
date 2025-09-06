@@ -1,149 +1,191 @@
 # Файл: trading/analytics/metrics_calculator.py
 
-import numpy as np
 import pandas as pd
-from dataclasses import dataclass
+import numpy as np
+from typing import List, Dict, Any
 
-@dataclass
-class PerformanceMetrics:
-    """Структура для хранения рассчитанных метрик производительности."""
-    total_return_pct: float  # Общая доходность в процентах
-    sharpe_ratio: float
-    sortino_ratio: float
-    max_drawdown_pct: float # Максимальная просадка в процентах
-    calmar_ratio: float
+class Metrics:
+    def __init__(self):
+        self.sharpe_ratio = 0.0
+        self.sortino_ratio = 0.0
+        self.calmar_ratio = 0.0
+        self.total_return_pct = 0.0
+        self.max_drawdown_pct = 0.0
+        # ... можно добавить другие метрики
 
 class MetricsCalculator:
-    """
-    Калькулятор финансовых метрик с исправленной логикой расчетов.
-    """
-    def __init__(self, trade_history: list[dict], initial_balance: float, risk_free_rate: float = 0.0):
+    def __init__(self, trade_history: List[Dict[str, Any]], initial_balance: float, risk_free_rate: float = 0.0):
+        self.trade_history = trade_history
         self.initial_balance = initial_balance
-        # Годовая безрисковая ставка, пересчитанная на дневную (если нужно, но для трейдинга часто оставляют 0)
-        self.risk_free_rate_decimal = risk_free_rate / 252 # 252 торговых дня в году
-
-        self.trade_history = [t for t in trade_history if t.get('timestamp') is not None]
+        self.risk_free_rate = risk_free_rate
         self.df = self._prepare_dataframe()
+        
+        # Разумные ограничения для коэффициентов
+        self.MAX_SHARPE = 10.0
+        self.MAX_SORTINO = 15.0
+        self.MAX_CALMAR = 20.0
 
     def _prepare_dataframe(self) -> pd.DataFrame:
-        """Подготавливает DataFrame из истории сделок."""
         if not self.trade_history:
             return pd.DataFrame()
         
         df = pd.DataFrame(self.trade_history)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df = df.set_index('timestamp').sort_index()
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df = df.sort_values(by='timestamp').set_index('timestamp')
         
-        df['pnl'] = df['profit'] # Используем уже рассчитанный PnL
-        
-        # --- ИСПРАВЛЕНИЕ: Рассчитываем доходность в виде десятичной дроби ---
-        df['return_decimal'] = df['pnl'] / self.initial_balance
+        df['pnl'] = df['profit']
+        df['cumulative_pnl'] = df['pnl'].cumsum()
+        df['balance'] = self.initial_balance + df['cumulative_pnl']
+        df['daily_return'] = df['balance'].pct_change().fillna(0)
         
         return df
 
-    def get_returns(self) -> pd.Series:
-        """Возвращает серию ДЕСЯТИЧНЫХ доходов по сделкам."""
-        return self.df['return_decimal'] if 'return_decimal' in self.df else pd.Series(dtype=float)
-
-    def _calculate_sharpe_ratio(self) -> float:
-        """Расчет Коэффициента Шарпа с защитой от экстремальных значений."""
-        returns = self.get_returns()
-        if len(returns) < 2: return 0.0
-        
-        std_dev = returns.std(ddof=1)
-        
-        # ЗАЩИТА: Минимальный порог для std_dev
-        MIN_STD_DEV = 1e-10
-        if std_dev < MIN_STD_DEV:
-            std_dev = MIN_STD_DEV
-        
-        sharpe = (returns.mean() - self.risk_free_rate_decimal) / std_dev
-        
-        # ЗАЩИТА: Ограничиваем максимальное значение Sharpe
-        MAX_SHARPE = 10.0
-        return min(max(sharpe, -MAX_SHARPE), MAX_SHARPE)
-
-    def _calculate_sortino_ratio(self) -> float:
-        """[ИСПРАВЛЕНО] Расчет Коэффициента Сортино с адаптивной защитой."""
-        returns = self.get_returns()
-        if len(returns) < 2: return 0.0
-        
-        target_return = self.risk_free_rate_decimal
-        downside_returns = returns[returns < target_return]
-        
-        # Если нет убытков - возвращаем разумное высокое значение
-        if len(downside_returns) == 0:
-            return 5.0  # Хорошо, но не максимум
-        
-        # Рассчитываем downside deviation разными способами
-        if len(downside_returns) == 1:
-            # Для 1 убытка - используем абсолютное значение
-            downside_deviation = abs(downside_returns.iloc[0])
-        elif len(downside_returns) < 5:
-            # Для малого количества - среднее абсолютное отклонение
-            downside_deviation = abs(downside_returns).mean()
-        else:
-            # Для большого количества - стандартное отклонение
-            downside_deviation = downside_returns.std(ddof=1)
-        
-        # Минимальная защита от деления на очень маленькие числа
-        min_deviation = max(1e-8, abs(returns.mean()) * 0.1)  # Адаптивный минимум
-        if downside_deviation < min_deviation:
-            downside_deviation = min_deviation
-        
-        sortino = (returns.mean() - target_return) / downside_deviation
-        
-        # Более мягкие ограничения в зависимости от количества сделок
-        if len(returns) < 10:
-            # Мало сделок - более строгие ограничения
-            max_sortino = 3.0
-        elif len(returns) < 20:
-            max_sortino = 5.0
-        else:
-            max_sortino = 10.0
-            
-        return min(max(sortino, -max_sortino), max_sortino)
-
-    def _calculate_max_drawdown_pct(self) -> float:
-        """Расчет максимальной просадки в процентах."""
-        if self.df.empty: return 0.0
-        
-        # Рассчитываем баланс после каждой сделки
-        balance_over_time = self.initial_balance + self.df['pnl'].cumsum()
-        # Находим пиковый баланс в каждой точке времени
-        peak = balance_over_time.expanding(min_periods=1).max()
-        # Рассчитываем просадку в деньгах
-        drawdown_abs = peak - balance_over_time
-        # Рассчитываем просадку в процентах от пика
-        drawdown_pct = (drawdown_abs / peak) * 100
-        
-        return drawdown_pct.max() if not drawdown_pct.empty else 0.0
-
-    def _calculate_calmar_ratio(self) -> float:
-        """Расчет Коэффициента Кальмара."""
-        if self.df.empty or len(self.get_returns()) < 2: return 0.0
-        
-        # Считаем среднегодовую доходность (упрощенно для бэктеста)
-        total_return = self.df['pnl'].sum() / self.initial_balance
-        num_days = (self.df.index[-1] - self.df.index[0]).days
-        annualized_return = total_return * (365 / num_days) if num_days > 0 else total_return
-
-        max_drawdown = self._calculate_max_drawdown_pct() / 100 # Нужна десятичная дробь
-        if max_drawdown == 0.0: return 0.0
-        
-        return annualized_return / max_drawdown
-
-    def calculate_all_metrics(self) -> PerformanceMetrics:
-        """Рассчитывает все метрики и возвращает их в виде структуры."""
+    def _normalize_by_trade_count(self, ratio: float) -> float:
+        """
+        Нормализует коэффициенты в зависимости от количества сделок.
+        Меньше сделок = менее надежная статистика = штраф.
+        """
         if self.df.empty:
-            return PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0)
-
-        total_return_pct = (self.df['pnl'].sum() / self.initial_balance) * 100
+            return 0.0
+            
+        trade_count = len(self.trade_history)
         
-        return PerformanceMetrics(
-            total_return_pct=total_return_pct,
-            sharpe_ratio=self._calculate_sharpe_ratio(),
-            sortino_ratio=self._calculate_sortino_ratio(),
-            max_drawdown_pct=self._calculate_max_drawdown_pct(),
-            calmar_ratio=self._calculate_calmar_ratio()
-        )
+        # Штраф за малое количество сделок
+        if trade_count < 20:
+            penalty_factor = trade_count / 20.0  # От 0.05 до 1.0
+            ratio *= penalty_factor
+        
+        return ratio
+
+    def calculate_sharpe_ratio(self) -> float:
+        if self.df.empty or self.df['daily_return'].std() == 0:
+            return 0.0
+        
+        excess_returns = self.df['daily_return'] - self.risk_free_rate
+        
+        # Если волатильность слишком мала (стратегия почти не торгует)
+        std_returns = excess_returns.std()
+        if std_returns < 1e-6:
+            return 0.0
+        
+        # Предполагаем 252 торговых дня в году
+        sharpe_ratio = excess_returns.mean() / std_returns * np.sqrt(252)
+        
+        # Проверяем на конечность и ограничиваем разумными пределами
+        if not np.isfinite(sharpe_ratio):
+            return 0.0
+            
+        # Применяем ограничения и нормализацию
+        sharpe_ratio = min(abs(sharpe_ratio), self.MAX_SHARPE) * np.sign(sharpe_ratio)
+        sharpe_ratio = self._normalize_by_trade_count(sharpe_ratio)
+        
+        return sharpe_ratio
+
+    def calculate_sortino_ratio(self) -> float:
+        """
+        ИСПРАВЛЕННЫЙ РАСЧЕТ СОРТИНО:
+        Убираем магические числа, добавляем разумные ограничения.
+        """
+        if self.df.empty:
+            return 0.0
+
+        target_return = self.risk_free_rate
+        excess_returns = self.df['daily_return'] - target_return
+        
+        # Вычисляем стандартное отклонение только для отрицательных доходностей
+        downside_returns = excess_returns[excess_returns < 0]
+        
+        # Если убыточных периодов нет, но есть прибыль - хорошо, но не фантастично
+        if len(downside_returns) == 0:
+            if excess_returns.mean() > 0:
+                # Возвращаем высокое, но разумное значение
+                sortino_ratio = self.MAX_SORTINO
+            else:
+                return 0.0
+        else:
+            downside_std = downside_returns.std()
+            if downside_std == 0:
+                return 0.0
+            
+            sortino_ratio = excess_returns.mean() / downside_std * np.sqrt(252)
+        
+        # Проверяем на конечность и ограничиваем
+        if not np.isfinite(sortino_ratio):
+            return 0.0
+            
+        # Применяем ограничения и нормализацию
+        sortino_ratio = min(abs(sortino_ratio), self.MAX_SORTINO) * np.sign(sortino_ratio)
+        sortino_ratio = self._normalize_by_trade_count(sortino_ratio)
+        
+        return sortino_ratio
+
+    def calculate_total_return_pct(self) -> float:
+        """Рассчитывает общую доходность в процентах."""
+        if self.df.empty:
+            return 0.0
+        total_profit = self.df['pnl'].sum()
+        return (total_profit / self.initial_balance) * 100
+
+    def calculate_max_drawdown_pct(self) -> float:
+        """Рассчитывает максимальную просадку в процентах."""
+        if self.df.empty:
+            return 0.0
+        
+        cumulative_max = self.df['balance'].cummax()
+        drawdown = (self.df['balance'] - cumulative_max) / cumulative_max
+        max_drawdown = drawdown.min()
+        return abs(max_drawdown) * 100
+
+    def calculate_calmar_ratio(self) -> float:
+        """
+        ИСПРАВЛЕННЫЙ РАСЧЕТ КАЛЬМАРА:
+        Убираем магические числа, добавляем разумную логику.
+        """
+        if self.df.empty:
+            return 0.0
+
+        cumulative_max = self.df['balance'].cummax()
+        drawdown = (self.df['balance'] - cumulative_max) / cumulative_max
+        max_drawdown = drawdown.min()
+
+        annualized_return = self.df['daily_return'].mean() * 252
+        
+        # Если просадки нет, но есть прибыль - отлично, но не бесконечно
+        if max_drawdown == 0:
+            if annualized_return > 0:
+                calmar_ratio = self.MAX_CALMAR
+            else:
+                return 0.0
+        else:
+            calmar_ratio = annualized_return / abs(max_drawdown)
+        
+        # Проверяем на конечность и ограничиваем
+        if not np.isfinite(calmar_ratio):
+            return 0.0
+            
+        # Применяем ограничения и нормализацию
+        calmar_ratio = min(abs(calmar_ratio), self.MAX_CALMAR) * np.sign(calmar_ratio)
+        calmar_ratio = self._normalize_by_trade_count(calmar_ratio)
+        
+        return calmar_ratio
+
+    def calculate_all_metrics(self) -> "Metrics":
+        metrics = Metrics()
+        if not self.trade_history:
+            return metrics
+            
+        metrics.sharpe_ratio = self.calculate_sharpe_ratio()
+        metrics.sortino_ratio = self.calculate_sortino_ratio()
+        metrics.calmar_ratio = self.calculate_calmar_ratio()
+        metrics.total_return_pct = self.calculate_total_return_pct()
+        metrics.max_drawdown_pct = self.calculate_max_drawdown_pct()
+        
+        # Округляем для красивого вывода
+        metrics.sharpe_ratio = round(metrics.sharpe_ratio, 4)
+        metrics.sortino_ratio = round(metrics.sortino_ratio, 4)
+        metrics.calmar_ratio = round(metrics.calmar_ratio, 4)
+        metrics.total_return_pct = round(metrics.total_return_pct, 2)
+        metrics.max_drawdown_pct = round(metrics.max_drawdown_pct, 2)
+
+        return metrics

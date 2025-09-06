@@ -1,0 +1,29 @@
+{
+	"strategy_file": "ema_crossover_strategy",
+	"parameters": [
+		{
+			"name": "fast_ema_period",
+			"type": "int",
+			"low": 5,
+			"high": 50
+		},
+		{
+			"name": "slow_ema_period",
+			"type": "int",
+			"low": 51,
+			"high": 200,
+			"depends_on": {
+				"name": "fast_ema_period",
+				"condition": "greater",
+				"margin": 10
+			}
+		},
+		{
+			"name": "tp_multiplier",
+			"type": "float",
+			"low": 1.01,
+			"high": 1.2,
+			"step": 0.001
+		}
+	]
+}
