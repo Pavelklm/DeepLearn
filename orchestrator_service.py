@@ -5,7 +5,8 @@ import multiprocessing
 import time
 import os
 import logging
-from bot_process import run_bot_process
+from bot_process import Playground  # Импортируем класс
+import bot_process  # Импортируем модуль целиком
 from utils.logging_config import setup_logging
 
 COMMANDS_DIR = "commands"
@@ -55,7 +56,7 @@ class Orchestrator:
             self.logger.warning(f"Бот с именем '{bot_name}' уже запущен. Команда проигнорирована.")
             return
         
-        process = multiprocessing.Process(target=run_bot_process, args=(bot_config,))
+        process = multiprocessing.Process(target=bot_process.run_bot_process, args=(bot_config,))
         self.running_bots[bot_name] = process
         process.start()
         self.logger.info(f"✅ Бот '{bot_name}' запущен в новом процессе (PID: {process.pid}).")

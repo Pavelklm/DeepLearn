@@ -1,0 +1,50 @@
+{
+	"strategy_file": "momentum_reversal_strategy",
+	"parameters": [
+		{
+			"name": "momentum_period",
+			"type": "int",
+			"low": 2,
+			"high": 5
+		},
+		{
+			"name": "sma_trend_period",
+			"type": "int",
+			"low": 30,
+			"high": 70
+		},
+		{
+			"name": "rsi_period",
+			"type": "int",
+			"low": 5,
+			"high": 10
+		},
+		{
+			"name": "rsi_oversold",
+			"type": "float",
+			"low": 25,
+			"high": 40,
+			"step": 2.5
+		},
+		{
+			"name": "rsi_recovery",
+			"type": "float",
+			"low": 40,
+			"high": 55,
+			"step": 2.5
+		},
+		{
+			"name": "tp_percentage",
+			"type": "float",
+			"low": 1.5,
+			"high": 4.0,
+			"step": 0.25
+		},
+		{
+			"name": "max_down_streak",
+			"type": "int",
+			"low": 1,
+			"high": 4
+		}
+	]
+}

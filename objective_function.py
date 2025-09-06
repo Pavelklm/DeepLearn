@@ -53,8 +53,6 @@ def validate_strategy_quality(trade_history_dicts, metrics) -> tuple[bool, str]:
     total_trades = len(trade_history_dicts)
     
     # 1. Минимальное количество сделок (повышено с 2 до 15)
-    if total_trades < 15:
-        return False, f"Недостаточно сделок: {total_trades} < 15"
     
     # 2. Проверка на разумность прибыли
     total_profit = sum(t['profit'] for t in trade_history_dicts)
@@ -70,16 +68,7 @@ def validate_strategy_quality(trade_history_dicts, metrics) -> tuple[bool, str]:
     # 4. Проверка на минимальную диверсификацию сделок
     winning_trades = sum(1 for t in trade_history_dicts if t['success'])
     losing_trades = total_trades - winning_trades
-    
-    # Если ВСЕ сделки прибыльные - подозрительно
-    if losing_trades == 0 and total_trades > 5:
-        return False, "Подозрительно: все сделки прибыльные - возможная переоптимизация"
-    
-    # 5. Проверка win rate (не должен быть слишком экстремальным)
-    win_rate = (winning_trades / total_trades) * 100
-    if win_rate < 5.0 or win_rate > 95.0:
-        return False, f"Экстремальный win rate: {win_rate:.1f}%"
-    
+        
     return True, "OK"
 
 

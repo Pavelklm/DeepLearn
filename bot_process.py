@@ -87,3 +87,22 @@ class Playground:
         
         if self.bot_config.get("generate_chart", False):
             self.reporter.generate_report(self.ohlcv_data)
+
+
+def run_bot_process(bot_config: dict):
+    """
+    Функция-обертка для запуска бота в отдельном процессе.
+    Используется orchestrator_service.
+    """
+    try:
+        # Для live-торговли нужен совсем другой код
+        # TODO: реализовать live-бота с получением реальных данных
+        print(f"\u26a0\ufe0f  Функция run_bot_process пока не реализована для live-торговли.")
+        print(f"Бот '{bot_config.get('bot_name', 'Unknown')}' должен был запускаться с конфигом: {bot_config}")
+        
+        # Пока просто ожидаем, чтобы процесс не завершился сразу
+        import time
+        time.sleep(10)
+        
+    except Exception as e:
+        print(f"❌ Ошибка в run_bot_process: {e}")
