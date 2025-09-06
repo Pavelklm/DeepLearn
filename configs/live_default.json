@@ -9,7 +9,11 @@
 		"max_consecutive_losses_global": 6,
 		"min_trade_usd": 10.0,
 		"max_position_multiplier": 3.0,
-		"default_sl_percent": 0.02
+		"default_sl_percent": 0.02,
+		"max_concurrent_trades": 5,
+		"max_futures_leverage": 3.0,
+		"default_tp_percent_for_long": 0.02,
+		"max_reasonable_profit_multiplier": 10.0
 	},
 	"fees": {
 		"entry_fee": 0.001,
@@ -23,7 +27,10 @@
 		"min_aggression": 0.1,
 		"max_aggression": 2.0,
 		"base_percent_of_balance": 0.01,
-		"losing_streak_penalty": 0.8
+		"losing_streak_penalty": 0.8,
+		"winstreak_power": 1.4,
+		"winstreak_multiplier": 0.15,
+		"confidence_power": 0.7
 	},
 	"validation": {
 		"min_profit_target_pct": 0.001,
@@ -41,7 +48,8 @@
 			"loss_streak_alert": 3,
 			"loss_streak_warning": 1,
 			"drawdown_high": 0.03,
-			"drawdown_medium": 0.01
+			"drawdown_medium": 0.01,
+			"drawdown_low": 0.005
 		}
 	}
 }

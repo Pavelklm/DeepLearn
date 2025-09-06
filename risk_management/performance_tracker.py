@@ -49,6 +49,47 @@ class PerformanceTracker:
 
     def update_trade_statistics(self, trade_result: Dict[str, Any]) -> None:
         """Обновление статистики после каждой сделки."""
+        # КРИТИЧЕСКАЯ ВАЛИДАЦИЯ: проверка структуры trade_result
+        if not isinstance(trade_result, dict):
+            logger.error(f"trade_result must be a dictionary, got: {type(trade_result)}")
+            return
+        
+        # Проверяем обязательные поля
+        required_fields = ['success', 'profit']
+        for field in required_fields:
+            if field not in trade_result:
+                logger.error(f"Missing required field '{field}' in trade_result: {trade_result}")
+                return
+        
+        # Проверяем типы ключевых полей
+        try:
+            profit = float(trade_result['profit'])
+            success = bool(trade_result['success'])
+            entry_price = float(trade_result.get('entry_price', 0.0))
+            exit_price = float(trade_result.get('exit_price', 0.0))
+            position_size = float(trade_result.get('position_size_usd', 0.0))
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid data types in trade_result: {e}. Data: {trade_result}")
+            return
+        
+        # Проверяем логичность значений
+        if entry_price < 0 or exit_price < 0:
+            logger.error(f"Prices cannot be negative: entry={entry_price}, exit={exit_price}")
+            return
+        
+        if position_size < 0:
+            logger.error(f"Position size cannot be negative: {position_size}")
+            return
+        
+        # Проверяем разумность прибыли/убытка
+        # Используем конфигурируемый множитель для проверки разумности прибыли
+        max_reasonable_profit = self.config.trading.initial_balance * self.config.trading.max_reasonable_profit_multiplier
+        if abs(profit) > max_reasonable_profit:
+            logger.warning(
+                f"Suspiciously large profit/loss: {profit:.2f} (>{max_reasonable_profit:.2f}). "
+                f"Proceeding but flagging for review."
+            )
+        
         trade = TradeResult(
             entry_timestamp=trade_result.get('entry_timestamp', datetime.now().isoformat()),
             timestamp=trade_result.get('timestamp', datetime.now().isoformat()),

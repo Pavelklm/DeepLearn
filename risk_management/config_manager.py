@@ -26,6 +26,11 @@ class TradingConfig:
     max_consecutive_losses_per_day: int
     max_consecutive_losses_global: int
     default_sl_percent: float
+    max_concurrent_trades: int  # Максимальное количество одновременных позиций
+    max_futures_leverage: float  # Максимальное плечо для фьючерсной торговли (1x-10x)
+    # Новые параметры для более гибкой настройки:
+    default_tp_percent_for_long: float  # Дефолтный процент прибыли для лонга (0.02 = 2%)
+    max_reasonable_profit_multiplier: float  # Множитель для проверки разумности прибыли (10.0 = 1000%)
 
 @dataclass
 class FeesConfig:
@@ -45,6 +50,10 @@ class AdaptiveConfig:
     max_aggression: float
     base_percent_of_balance: float
     losing_streak_penalty: float
+    # Новые параметры для более гибкой настройки:
+    winstreak_power: float  # Степень для расчета множителя серии побед (1.4)
+    winstreak_multiplier: float  # Множитель для серии побед (0.15)
+    confidence_power: float  # Степень для расчета доверия (0.7)
 
 
 @dataclass
@@ -197,6 +206,18 @@ class ConfigManager:
             raise ConfigValidationError("max_position_multiplier должно быть больше 0")
         if not 0.001 <= config.trading.default_sl_percent <= 0.1:
             raise ConfigValidationError("default_sl_percent должно быть от 0.1% до 10%")
+        if not 0 < config.trading.max_risk_per_trade <= 0.05:
+            raise ConfigValidationError("max_risk_per_trade должно быть от 0 до 0.05 (5%)")
+        if config.trading.max_concurrent_trades < 1:
+            raise ConfigValidationError("max_concurrent_trades должно быть больше 0")
+        if config.trading.max_concurrent_trades > 10:
+            raise ConfigValidationError("max_concurrent_trades не должно превышать 10 для безопасности")
+        if not 1.0 <= config.trading.max_futures_leverage <= 10.0:
+            raise ConfigValidationError("max_futures_leverage должно быть от 1.0x до 10.0x для безопасности")
+        if not 0.005 <= config.trading.default_tp_percent_for_long <= 0.1:
+            raise ConfigValidationError("default_tp_percent_for_long должно быть от 0.5% до 10%")
+        if not 5.0 <= config.trading.max_reasonable_profit_multiplier <= 50.0:
+            raise ConfigValidationError("max_reasonable_profit_multiplier должно быть от 5x до 50x")
 
         # Проверяем комиссии
         if not 0 <= config.fees.entry_fee <= 1:
@@ -221,4 +242,10 @@ class ConfigManager:
             raise ConfigValidationError("base_percent_of_balance должно быть от 0 до 0.1 (10%)")
         if not 0 < config.adaptive.losing_streak_penalty <= 1:
             raise ConfigValidationError("losing_streak_penalty должно быть от 0 до 1")
+        if not 1.0 <= config.adaptive.winstreak_power <= 2.0:
+            raise ConfigValidationError("winstreak_power должно быть от 1.0 до 2.0")
+        if not 0.05 <= config.adaptive.winstreak_multiplier <= 0.5:
+            raise ConfigValidationError("winstreak_multiplier должно быть от 0.05 до 0.5")
+        if not 0.5 <= config.adaptive.confidence_power <= 1.0:
+            raise ConfigValidationError("confidence_power должно быть от 0.5 до 1.0")
 

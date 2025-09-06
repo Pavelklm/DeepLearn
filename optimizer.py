@@ -53,7 +53,9 @@ def make_window_result(window_num, train_period, test_period, best_params, score
                        trades=None, initial_balance=None, error=None):
     """Формирует результат окна walk-forward"""
 
-    safe_balance = float(initial_balance) if initial_balance is not None else 1.0
+    if initial_balance is None:
+        raise ValueError("Initial balance cannot be None for metrics calculation")
+    safe_balance = float(initial_balance)
 
     if trades and len(trades) > 0:
         profit = sum(t['profit'] for t in trades)

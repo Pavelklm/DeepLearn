@@ -52,7 +52,9 @@ def validate_strategy_quality(trade_history_dicts, metrics) -> tuple[bool, str]:
     """
     total_trades = len(trade_history_dicts)
     
-    # 1. Минимальное количество сделок (повышено с 2 до 15)
+    # 1. Минимальное количество сделок для достоверной статистики
+    if total_trades < 15:
+        return False, f"Недостаточно сделок для оценки: {total_trades}/15"
     
     # 2. Проверка на разумность прибыли
     total_profit = sum(t['profit'] for t in trade_history_dicts)

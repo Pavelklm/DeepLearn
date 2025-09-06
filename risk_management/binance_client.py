@@ -94,8 +94,30 @@ def retry_network_sensitive(max_attempts: int = 2, delay: float = 1.0):
 
 class BinanceClient:
     def __init__(self, api_key: str, api_secret: str):
+        # Валидация API ключей
+        if not api_key or not isinstance(api_key, str) or len(api_key.strip()) == 0:
+            raise ValueError("API key cannot be empty or None")
+        if not api_secret or not isinstance(api_secret, str) or len(api_secret.strip()) == 0:
+            raise ValueError("API secret cannot be empty or None")
+        
         self.client = Client(api_key, api_secret, requests_params={"timeout": 30})
         logger.info("Binance клиент инициализирован с таймаутом 30с")
+        
+        # Проверяем валидность ключей через простой запрос
+        try:
+            account_info = self.client.get_account()
+            if not account_info:
+                raise ValueError("Invalid API response - empty account info")
+            logger.info("✅ API ключи валидны")
+        except BinanceAPIException as e:
+            if e.code == -2014:
+                raise ValueError("Invalid API key or secret - authentication failed") from e
+            elif e.code == -1021:
+                raise ValueError("API key timestamp issue - check system time") from e
+            else:
+                raise ValueError(f"API validation failed: {e}") from e
+        except Exception as e:
+            raise ValueError(f"Failed to validate API keys: {e}") from e
 
     @retry_safe_operations()
     def get_account_balance(self, asset: str = "USDT") -> float:

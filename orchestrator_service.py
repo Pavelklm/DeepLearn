@@ -105,8 +105,14 @@ class Orchestrator:
         self.logger.info("✅ Оркестратор запущен и слушает команды...")
         try:
             while True:
-                self._check_for_commands()
-                self.monitor_bots()
+                try:
+                    self._check_for_commands()
+                    self.monitor_bots()
+                except Exception as e:
+                    self.logger.error(f"Ошибка в главном цикле оркестратора: {e}")
+                    self.logger.info("Продолжаем работу через 10 секунд...")
+                    time.sleep(10)
+                    continue
                 time.sleep(5)
         except KeyboardInterrupt:
             self.logger.info("Получен сигнал KeyboardInterrupt. Завершение работы Оркестратора...")

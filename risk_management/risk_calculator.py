@@ -213,17 +213,37 @@ class RiskCalculator:
         :param max_risk_usd: максимально допустимый риск в USD
         :return: размер позиции в USD
         """
+        # КРИТИЧЕСКАЯ ПРОВЕРКА: защита от некорректных входных данных
+        if not isinstance(entry_price, (int, float)) or entry_price <= 0:
+            raise ValueError(f"Entry price must be a positive number, got: {entry_price}")
+        
+        if not isinstance(sl_price, (int, float)) or sl_price <= 0:
+            raise ValueError(f"SL price must be a positive number, got: {sl_price}")
+        
+        if not isinstance(max_risk_usd, (int, float)) or max_risk_usd < 0:
+            raise ValueError(f"Max risk USD must be non-negative, got: {max_risk_usd}")
+        
         if entry_price == sl_price:
             raise ValueError("Entry price and suggested SL price cannot be the same.")
+        
+        # Если max_risk_usd = 0, возвращаем минимальный размер
+        if max_risk_usd == 0:
+            return self.config.trading.min_trade_usd
         
         price_risk_percent = abs(entry_price - sl_price) / entry_price if entry_price > 0 else 0
         total_fee_percent = self.config.fees.entry_fee + self.config.fees.sl_fee
         total_risk_percent = price_risk_percent + total_fee_percent
 
         if total_risk_percent <= 0:
-            raise ValueError("Total risk percent is zero or negative, cannot calculate position size.")
+            raise ValueError(
+                f"Total risk percent is zero or negative ({total_risk_percent:.6f}), cannot calculate position size. "
+                f"Price risk: {price_risk_percent:.6f}, Fees: {total_fee_percent:.6f}"
+            )
 
-        return max_risk_usd / total_risk_percent
+        calculated_size = max_risk_usd / total_risk_percent
+        
+        # Защита от очень маленьких размеров
+        return max(calculated_size, self.config.trading.min_trade_usd)
 
     def _calculate_net_pnl(
         self,
@@ -296,7 +316,8 @@ class RiskCalculator:
         # Рассчитываем доверие к стратегии на основе числа сделок
         confidence_numerator = max(0, total_trades - self.config.adaptive.min_trades_for_stats)
         confidence_denominator = max(1, self.config.adaptive.max_confidence_trades - self.config.adaptive.min_trades_for_stats)
-        confidence_weight = (confidence_numerator / confidence_denominator) ** 0.7
+        # Используем конфигурируемую степень для расчета доверия
+        confidence_weight = (confidence_numerator / confidence_denominator) ** self.config.adaptive.confidence_power
         
         # Адаптивная агрессия
         dynamic_aggression = self.config.adaptive.min_aggression + (self.config.adaptive.max_aggression - self.config.adaptive.min_aggression) * confidence_weight
@@ -314,11 +335,20 @@ class RiskCalculator:
             if not trade['success']: losing_streak += 1
             else: break
 
-        winstreak_multiplier = 1.0 + pow(winning_streak, 1.4) * 0.15
+        # Используем конфигурируемые параметры для адаптивных расчетов
+        winstreak_multiplier = 1.0 + pow(winning_streak, self.config.adaptive.winstreak_power) * self.config.adaptive.winstreak_multiplier
         losestreak_penalty = pow(self.config.adaptive.losing_streak_penalty, losing_streak)
 
         # Итоговый расчет позиции
         base_size = current_balance * self.config.adaptive.base_percent_of_balance
         calculated_size = base_size * core_multiplier * winstreak_multiplier * losestreak_penalty
         
-        return calculated_size
+        # КРИТИЧЕСКОЕ ОГРАНИЧЕНИЕ: максимальное плечо из конфига (для фьючерсов)
+        max_leverage = self.config.trading.max_futures_leverage  # Конфигурируемое плечо
+        max_adaptive_size = current_balance * max_leverage  # Макс плечо от депо
+        
+        # Ограничиваем результат минимумом и максимумом
+        final_size = max(self.config.trading.min_trade_usd, 
+                         min(calculated_size, max_adaptive_size))
+        
+        return final_size

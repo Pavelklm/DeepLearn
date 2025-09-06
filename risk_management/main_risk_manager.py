@@ -140,7 +140,9 @@ class RiskManager:
         
         # ИСПРАВЛЕНО: Определяем направление сделки правильно
         if side is None:
-            final_tp_for_side_check = target_tp_price or entry_price * 1.02  # Дефолт: лонг
+            # Используем конфигурируемый дефолтный процент прибыли для лонга
+            default_tp_multiplier = 1 + self.config.trading.default_tp_percent_for_long
+            final_tp_for_side_check = target_tp_price or entry_price * default_tp_multiplier
             side = "BUY" if final_tp_for_side_check > entry_price else "SELL"
         
         # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убедимся что все параметры логически согласованы с определенным направлением
@@ -204,6 +206,18 @@ class RiskManager:
         allowed_info = self.check_trading_allowed()
         if not allowed_info["trade_allowed"]:
             return {"trade_allowed": False, "order_placed": False, "reason": "; ".join(allowed_info["reasons"])}
+        
+        # КРИТИЧЕСКАЯ ПРОВЕРКА: лимит одновременных позиций
+        active_trades_count = len(self.active_trades)
+        max_concurrent = self.config.trading.max_concurrent_trades
+        if active_trades_count >= max_concurrent:
+            error_msg = (
+                f"Превышен лимит одновременных позиций: "
+                f"{active_trades_count}/{max_concurrent}. Закройте существующие позиции перед открытием новых."
+            )
+            if not self.silent_mode:
+                logger.warning(error_msg)
+            return {"trade_allowed": False, "order_placed": False, "reason": error_msg}
 
         trade_params = self.calculate_trade_parameters(entry_price, target_tp_price, suggested_sl_price, side)
         
@@ -240,6 +254,31 @@ class RiskManager:
         self, order_id: str, exit_price: float, trade_type: str = "TP",
         timestamp: Optional[str] = None
     ) -> Dict[str, Any]:
+        # КРИТИЧЕСКАЯ ВАЛИДАЦИЯ: проверка exit_price
+        if not isinstance(exit_price, (int, float)) or exit_price <= 0:
+            error_msg = f"Invalid exit_price: {exit_price}. Must be a positive number."
+            if not self.silent_mode:
+                logger.error(error_msg)
+            return {"success": False, "reason": error_msg}
+        
+        # ВАЛИДАЦИЯ: проверка trade_type
+        valid_trade_types = {"TP", "SL", "MANUAL"}
+        if trade_type not in valid_trade_types:
+            error_msg = f"Invalid trade_type: {trade_type}. Must be one of {valid_trade_types}"
+            if not self.silent_mode:
+                logger.error(error_msg)
+            return {"success": False, "reason": error_msg}
+        
+        # ВАЛИДАЦИЯ: проверка timestamp если передан
+        if timestamp is not None:
+            try:
+                datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                error_msg = f"Invalid timestamp format: {timestamp}. Must be ISO format."
+                if not self.silent_mode:
+                    logger.error(error_msg)
+                return {"success": False, "reason": error_msg}
+        
         trade_info = self.active_trades.get(order_id)
         if not trade_info:
             if not self.silent_mode:
@@ -275,7 +314,20 @@ class RiskManager:
         self.performance_tracker.update_trade_statistics(trade_result)
         
         if self.mode in ("paper", "backtest"):
-            self.balance += profit
+            # КРИТИЧЕСКАЯ ПРОВЕРКА: защита от отрицательного баланса
+            new_balance = self.balance + profit
+            if new_balance < 0:
+                warning_msg = (
+                    f"КРИТИЧЕСКО: Отрицательный баланс! "
+                    f"Текущий: {self.balance:.2f}, Прибыль: {profit:.2f}, "
+                    f"Новый баланс: {new_balance:.2f}. Устанавливаем баланс = 0"
+                )
+                if not self.silent_mode:
+                    logger.error(warning_msg)
+                self.balance = 0.0  # Минимальный возможный баланс
+            else:
+                self.balance = new_balance
+            
             self.active_trades.pop(order_id, None)
             state = {"balance": self.balance, "active_trades": self.active_trades}
             self._save_state(state)
