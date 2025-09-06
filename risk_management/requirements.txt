@@ -1,0 +1,10 @@
+python-binance
+python-dotenv
+pandas
+numpy
+python-telegram-bot
+pytest
+pytest-mock
+yfinance
+matplotlib
+optuna
