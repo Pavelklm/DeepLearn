@@ -314,19 +314,17 @@ class RiskManager:
         self.performance_tracker.update_trade_statistics(trade_result)
         
         if self.mode in ("paper", "backtest"):
-            # КРИТИЧЕСКАЯ ПРОВЕРКА: защита от отрицательного баланса
+            # ОБНОВЛЕНИЕ БАЛАНСА: разрешаем отрицательный баланс для честного бэктеста
             new_balance = self.balance + profit
-            if new_balance < 0:
+            if new_balance < 0 and not self.silent_mode:
                 warning_msg = (
                     f"КРИТИЧЕСКО: Отрицательный баланс! "
                     f"Текущий: {self.balance:.2f}, Прибыль: {profit:.2f}, "
-                    f"Новый баланс: {new_balance:.2f}. Устанавливаем баланс = 0"
+                    f"Новый баланс: {new_balance:.2f}. Продолжаем с отрицательным балансом."
                 )
-                if not self.silent_mode:
-                    logger.error(warning_msg)
-                self.balance = 0.0  # Минимальный возможный баланс
-            else:
-                self.balance = new_balance
+                logger.error(warning_msg)
+            
+            self.balance = new_balance  # Позволяем отрицательный баланс для честности
             
             self.active_trades.pop(order_id, None)
             state = {"balance": self.balance, "active_trades": self.active_trades}

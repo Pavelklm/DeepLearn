@@ -1,0 +1,95 @@
+{
+	"data_settings": {
+		"default_ticker": "BTC-USD",
+		"default_period": "2y",
+		"default_interval": "1h",
+		"min_data_points": 1000
+	},
+
+	"walk_forward": {
+		"train_months": 2,
+		"validation_months": 0.5,
+		"test_months": 1,
+		"step_months": 0.5,
+		"min_windows": 3,
+		"max_windows": 20
+	},
+
+	"optimization": {
+		"trials_per_window": 30,
+		"max_trials": 50,
+		"min_trials": 15,
+		"timeout_minutes": 30,
+		"n_jobs": 1,
+		"study_direction": "maximize"
+	},
+
+	"validation": {
+		"min_trades_for_significance": 30,
+		"min_profitable_windows_pct": 0.4,
+		"max_parameter_variation_cv": 0.5,
+		"statistical_significance_level": 0.05,
+		"out_of_sample_degradation_threshold": 0.3,
+		"robustness_test_variations": 10,
+		"parameter_noise_level": 0.1
+	},
+
+	"overfitting_detection": {
+		"max_profitable_windows_ratio": 0.85,
+		"min_parameter_consistency": 0.3,
+		"max_score_degradation": 0.4,
+		"min_trade_frequency_stability": 0.5,
+		"suspicious_sharpe_percentile": 99.0,
+		"suspicious_sortino_percentile": 99.0,
+		"suspicious_calmar_percentile": 99.0
+	},
+
+	"metrics_weights": {
+		"sharpe_ratio": 0.35,
+		"sortino_ratio": 0.35,
+		"calmar_ratio": 0.15,
+		"stability_bonus": 0.1,
+		"trade_frequency_penalty": 0.05
+	},
+
+	"risk_limits": {
+		"max_drawdown_threshold": 0.15,
+		"min_win_rate": 0.25,
+		"max_consecutive_losses": 10,
+		"min_profit_factor": 1.1,
+		"max_var_95": 0.05
+	},
+
+	"performance_thresholds": {
+		"excellent_annual_return": 0.5,
+		"good_annual_return": 0.2,
+		"poor_annual_return": 0.0,
+		"critical_annual_return": -0.1
+	},
+
+	"reporting": {
+		"charts_directory": "charts/optimizer",
+		"save_detailed_results": true,
+		"save_parameter_history": true,
+		"generate_comparison_charts": true,
+		"export_to_csv": true,
+		"chart_dpi": 300,
+		"chart_style": "seaborn-v0_8"
+	},
+
+	"experimental": {
+		"enable_ensemble_optimization": false,
+		"enable_adaptive_trials": true,
+		"enable_parameter_clustering": false,
+		"enable_regime_detection": false,
+		"enable_multi_objective": false
+	},
+
+	"logging": {
+		"level": "INFO",
+		"save_to_file": true,
+		"log_file": "optimizer.log",
+		"verbose_trials": false,
+		"show_progress_bars": true
+	}
+}
