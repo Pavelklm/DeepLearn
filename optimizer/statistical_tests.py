@@ -2,10 +2,10 @@
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import logging
 from scipy import stats
-from scipy.stats import jarque_bera, shapiro, kstest
+from scipy.stats import jarque_bera, shapiro, kstest, ttest_ind
 import warnings
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
@@ -127,8 +127,9 @@ class StatisticalValidator:
             
             # 3. Тест Колмогорова-Смирнова с нормальным распределением
             # Сравниваем с нормальным распределением с теми же параметрами
-            mean_r, std_r = np.mean(returns), np.std(returns)
-            ks_stat, ks_p = kstest(returns, lambda x: stats.norm.cdf(x, mean_r, std_r))
+            mean_r = float(np.mean(returns))
+            std_r = float(np.std(returns))
+            ks_stat, ks_p = kstest(returns, "norm", args=(float(mean_r), float(std_r)))   # type: ignore
             results['ks_statistic'] = ks_stat
             results['ks_p_value'] = ks_p
             results['ks_normal'] = ks_p > self.significance_level
@@ -254,7 +255,7 @@ class StatisticalValidator:
         n = len(returns)
         max_lags = min(max_lags, n // 4)  # Не более четверти от размера выборки
         
-        results = {
+        results: Dict[str, Any] = {
             'autocorrelations': {},
             'ljung_box_statistics': {},
             'ljung_box_p_values': {}
@@ -444,51 +445,91 @@ class StatisticalValidator:
             Dict: Результаты сравнения
         """
         results = {}
-        
+
         try:
+            # -------------------------------
             # 1. t-тест для сравнения средних
-            t_stat, t_p = stats.ttest_ind(returns_A, returns_B)
+            # -------------------------------
+            t_result = ttest_ind(returns_A, returns_B)
+
+            t_stat: float = float(getattr(t_result, "statistic", 0.0))  # type: ignore[attr-defined]
+            t_p: float = float(getattr(t_result, "pvalue", 1.0))        # type: ignore[attr-defined]
+
+            if not np.isfinite(t_stat):
+                t_stat = 0.0
+            if not np.isfinite(t_p):
+                t_p = 1.0
+
             results['t_test'] = {
                 'statistic': t_stat,
                 'p_value': t_p,
                 'A_significantly_better': t_p < self.significance_level and t_stat > 0,
-                'B_significantly_better': t_p < self.significance_level and t_stat < 0
+                'B_significantly_better': t_p < self.significance_level and t_stat < 0,
             }
-            
-            # 2. Тест Манна-Уитни (непараметрический)
-            mw_stat, mw_p = stats.mannwhitneyu(returns_A, returns_B, alternative='two-sided')
+
+            # -------------------------------
+            # 2. Mann-Whitney U test (непараметрический)
+            # -------------------------------
+            mw_result = stats.mannwhitneyu(list(returns_A), list(returns_B), alternative='two-sided')  # type: ignore
+            mw_stat: float = float(getattr(mw_result, 'statistic', 0.0))
+            mw_p: float = float(getattr(mw_result, 'pvalue', 1.0))
+
             results['mann_whitney'] = {
                 'statistic': mw_stat,
                 'p_value': mw_p,
                 'significantly_different': mw_p < self.significance_level
             }
-            
-            # 3. Тест Левене для сравнения дисперсий
-            levene_stat, levene_p = stats.levene(returns_A, returns_B)
+
+            # -------------------------------
+            # 3. Levene test (сравнение дисперсий)
+            # -------------------------------
+            levene_result = stats.levene(list(returns_A), list(returns_B))  # type: ignore
+            levene_stat: float = float(getattr(levene_result, 'statistic', 0.0))
+            levene_p: float = float(getattr(levene_result, 'pvalue', 1.0))
+
             results['levene_test'] = {
                 'statistic': levene_stat,
                 'p_value': levene_p,
                 'equal_variances': levene_p > self.significance_level
             }
-            
+
+            # -------------------------------
             # 4. Описательная статистика
+            # -------------------------------
+            def descriptive_stats(returns: np.ndarray) -> Dict:
+                mean = float(np.mean(returns))
+                std = float(np.std(returns))
+                sharpe = mean / std if std > 0 else 0.0
+                win_rate = float(np.sum(returns > 0) / len(returns))
+                return {'mean': mean, 'std': std, 'sharpe': sharpe, 'win_rate': win_rate}
+
             results['descriptive'] = {
-                'A': {
-                    'mean': np.mean(returns_A),
-                    'std': np.std(returns_A),
-                    'sharpe': np.mean(returns_A) / np.std(returns_A) if np.std(returns_A) > 0 else 0,
-                    'win_rate': np.sum(returns_A > 0) / len(returns_A)
-                },
-                'B': {
-                    'mean': np.mean(returns_B),
-                    'std': np.std(returns_B),
-                    'sharpe': np.mean(returns_B) / np.std(returns_B) if np.std(returns_B) > 0 else 0,
-                    'win_rate': np.sum(returns_B > 0) / len(returns_B)
-                }
+                'A': descriptive_stats(returns_A),
+                'B': descriptive_stats(returns_B)
             }
-            
+
         except Exception as e:
             self.logger.error(f"Ошибка в сравнении стратегий: {e}")
             results['error'] = str(e)
-        
+            results['t_test'] = {
+                'statistic': 0.0,
+                'p_value': 1.0,
+                'A_significantly_better': False,
+                'B_significantly_better': False
+            }
+            results['mann_whitney'] = {
+                'statistic': 0.0,
+                'p_value': 1.0,
+                'significantly_different': False
+            }
+            results['levene_test'] = {
+                'statistic': 0.0,
+                'p_value': 1.0,
+                'equal_variances': True
+            }
+            results['descriptive'] = {
+                'A': {'mean': 0.0, 'std': 0.0, 'sharpe': 0.0, 'win_rate': 0.0},
+                'B': {'mean': 0.0, 'std': 0.0, 'sharpe': 0.0, 'win_rate': 0.0}
+            }
+
         return results

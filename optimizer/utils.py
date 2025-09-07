@@ -169,8 +169,8 @@ class OptimizerUtils:
         
         overall_stability = 0.0
         if numeric_cvs:
-            avg_cv = np.mean(numeric_cvs)
-            numeric_stability = max(0, 1 - avg_cv / 2)  # CV = 2 дает стабильность 0
+            avg_cv = float(np.mean(numeric_cvs))
+            numeric_stability = max(0.0, 1 - avg_cv / 2)  # CV = 2 дает стабильность 0
             overall_stability += numeric_stability * 0.7
         
         if categorical_consistencies:

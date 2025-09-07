@@ -1,7 +1,6 @@
 # Файл: optimizer/__init__.py
 
-"""
-Продвинутая система оптимизации торговых стратегий с защитой от overfitting.
+"""Продвинутая система оптимизации торговых стратегий с защитой от overfitting.
 
 Модули:
 - main_optimizer: Главный класс AdvancedOptimizer 
@@ -27,11 +26,40 @@
 __version__ = "1.0.0"
 __author__ = "Trading Optimizer Team"
 
-from .main_optimizer import AdvancedOptimizer
-from .objective_function import OptimizerObjective  
-from .validation_engine import ValidationEngine
-from .statistical_tests import StatisticalValidator
-from .utils import OptimizerUtils, OptimizerReporter
+# Основные импорты
+try:
+    from .main_optimizer import AdvancedOptimizer
+    from .objective_function import OptimizerObjective  
+    from .validation_engine import ValidationEngine
+    from .statistical_tests import StatisticalValidator
+    from .utils import OptimizerUtils, OptimizerReporter
+except ImportError:
+    # Fallback для случая прямого запуска
+    import sys
+    import os
+    from pathlib import Path
+    
+    # Добавляем текущую директорию в sys.path
+    current_dir = Path(__file__).parent.absolute()
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+    
+    try:
+        from main_optimizer import AdvancedOptimizer
+        from objective_function import OptimizerObjective  
+        from validation_engine import ValidationEngine
+        from statistical_tests import StatisticalValidator
+        from utils import OptimizerUtils, OptimizerReporter
+    except ImportError as e:
+        print(f"⚠️ Не удалось импортировать модули оптимизатора: {e}")
+        print(f"Убедитесь, что все файлы находятся в директории: {current_dir}")
+        # Не поднимаем ошибку, чтобы модуль мог загрузиться частично
+        AdvancedOptimizer = None
+        OptimizerObjective = None
+        ValidationEngine = None
+        StatisticalValidator = None
+        OptimizerUtils = None
+        OptimizerReporter = None
 
 __all__ = [
     'AdvancedOptimizer',

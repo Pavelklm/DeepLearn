@@ -8,13 +8,20 @@ from typing import Dict, Any, Tuple, Optional, List
 import logging
 from pathlib import Path
 
-# Импорты из основной системы - нужно будет адаптировать пути
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-
-from bot_process import Playground
-from analytics.metrics_calculator import MetricsCalculator
-from risk_management.config_manager import ConfigManager
+# Импорты из основной системы
+try:
+    # Пытаемся импортировать относительно
+    from ..bot_process import Playground
+    from ..analytics.metrics_calculator import MetricsCalculator
+    from ..risk_management.config_manager import ConfigManager
+except ImportError:
+    # Fallback: если относительные импорты не работают
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent))
+    
+    from bot_process import Playground
+    from analytics.metrics_calculator import MetricsCalculator
+    from risk_management.config_manager import ConfigManager
 
 
 class OptimizerObjective:

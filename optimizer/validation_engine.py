@@ -5,8 +5,20 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional
 import logging
 from scipy import stats
-from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans
+try:
+    from sklearn.metrics import silhouette_score
+    from sklearn.cluster import KMeans
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    try:
+        # Попытка импорта с правильным названием пакета
+        import sklearn.metrics
+        import sklearn.cluster
+        from sklearn.metrics import silhouette_score
+        from sklearn.cluster import KMeans
+        SKLEARN_AVAILABLE = True
+    except ImportError:
+        SKLEARN_AVAILABLE = False
 
 
 class ValidationEngine:
@@ -153,10 +165,27 @@ class ValidationEngine:
             warnings.append('⚠️ Нестабильные результаты между окнами')
         
         # Проверяем тренд деградации
+        correlation_with_time = None
         if len(test_scores) >= 3:
-            correlation_with_time = stats.pearsonr(range(len(test_scores)), test_scores)[0]
-            if correlation_with_time < -0.5:
-                warnings.append('📉 Обнаружена деградация performance со временем')
+            try:
+                # Простой и надежный способ получить корреляцию
+                x_values = list(range(len(test_scores)))
+                y_values = list(test_scores)
+                correlation_result = stats.pearsonr(x_values, y_values)
+                
+                # Обрабатываем результат универсально
+                if isinstance(correlation_result, tuple):
+                    corr_value = correlation_result[0]
+                else:
+                    corr_value = getattr(correlation_result, 'correlation', correlation_result[0])
+                
+                correlation_with_time = float(corr_value) if not np.isnan(float(corr_value)) else 0.0  # type: ignore
+                
+                if correlation_with_time < -0.5:
+                    warnings.append('📉 Обнаружена деградация performance со временем')
+            except Exception as e:
+                self.logger.debug(f"Ошибка в расчете корреляции: {e}")
+                correlation_with_time = 0.0
         
         return {
             'test_score_mean': test_mean,
@@ -234,8 +263,8 @@ class ValidationEngine:
         
         overall_stability = 0.0
         if numeric_cvs:
-            avg_cv = np.mean(numeric_cvs)
-            overall_stability += max(0, 1 - avg_cv) * 0.7  # 70% вес числовым параметрам
+            avg_cv = float(np.mean(numeric_cvs))
+            overall_stability += max(0.0, 1 - avg_cv) * 0.7  # 70% вес числовым параметрам
         
         if categorical_consistencies:
             avg_consistency = np.mean(categorical_consistencies)

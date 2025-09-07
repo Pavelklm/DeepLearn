@@ -6,17 +6,56 @@ import time
 import argparse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from tqdm import tqdm
 import optuna
 
-from .objective_function import OptimizerObjective
-from .validation_engine import ValidationEngine
-from .statistical_tests import StatisticalValidator
-from .utils import OptimizerUtils, OptimizerReporter
+# Импорты модулей оптимизатора
+try:
+    from .objective_function import OptimizerObjective
+    from .validation_engine import ValidationEngine
+    from .statistical_tests import StatisticalValidator
+    # Прямой импорт классов из utils
+    from .utils import OptimizerUtils, OptimizerReporter
+except (ImportError, ValueError):
+    # Fallback для прямого запуска
+    import sys
+    from pathlib import Path
+    current_dir = Path(__file__).parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+    
+    try:
+        from objective_function import OptimizerObjective
+        from validation_engine import ValidationEngine
+        from statistical_tests import StatisticalValidator
+        # Прямой импорт классов из utils
+        from utils import OptimizerUtils, OptimizerReporter
+    except ImportError as e:
+        print(f"⚠️ Проблема с импортами: {e}")
+        print("Убедитесь, что все файлы находятся в папке optimizer/")
+        
+        # Последняя попытка - прямой импорт через importlib
+        try:
+            import importlib.util
+            
+            # Импорт utils
+            utils_path = current_dir / "utils.py"
+            spec = importlib.util.spec_from_file_location("utils", utils_path)
+            utils_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(utils_module)
+            
+            OptimizerUtils = utils_module.OptimizerUtils
+            OptimizerReporter = utils_module.OptimizerReporter
+            
+            print("✅ Успешно импортировали через importlib")
+            
+        except Exception as final_e:
+            print(f"❌ Критическая ошибка импорта: {final_e}")
+            raise
 
 
 class AdvancedOptimizer:
@@ -31,9 +70,9 @@ class AdvancedOptimizer:
     5. Робастность-тесты
     """
     
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: Optional[str] = None):
         """Инициализация оптимизатора с конфигурацией."""
-        self.config_path = config_path or Path(__file__).parent / "optimizer_config.json"
+        self.config_path = config_path if config_path else str(Path(__file__).parent / "optimizer_config.json")
         self.config = self._load_config()
         self._setup_logging()
         self._setup_directories()
@@ -65,7 +104,8 @@ class AdvancedOptimizer:
         log_config = self.config['logging']
         level = getattr(logging, log_config['level'])
         
-        handlers = [logging.StreamHandler()]
+        handlers = []
+        handlers.append(logging.StreamHandler())
         if log_config['save_to_file']:
             log_file = Path(__file__).parent / log_config['log_file']
             handlers.append(logging.FileHandler(log_file))
@@ -86,7 +126,7 @@ class AdvancedOptimizer:
         charts_dir = Path(self.config['reporting']['charts_directory'])
         charts_dir.mkdir(parents=True, exist_ok=True)
     
-    def load_data(self, ticker: str = None, period: str = None, interval: str = None) -> pd.DataFrame:
+    def load_data(self, ticker: Optional[str] = None, period: Optional[str] = None, interval: Optional[str] = None) -> pd.DataFrame:
         """Загрузка исторических данных с валидацией."""
         data_config = self.config['data_settings']
         
@@ -223,19 +263,24 @@ class AdvancedOptimizer:
         train_score = study.best_trial.value
         
         # Валидация на validation set
-        val_score = self.objective.evaluate_fixed_params(
+        val_result = self.objective.evaluate_fixed_params(
             best_params, window['val_data'], strategy_config_path, mode='validation'
         )
+        val_score = val_result.get('score', 0.0)
         
         # Финальный тест на test set
         test_result = self.objective.evaluate_fixed_params(
             best_params, window['test_data'], strategy_config_path, mode='test'
         )
-        
+        test_score = test_result.get('score', 0.0)
+
         # Проверка на overfitting
-        overfitting_detected = self.validator.detect_overfitting(
-            train_score, val_score, test_result['score']
-        )
+        if train_score is None:
+            overfitting_detected = True
+        else:
+            overfitting_detected = self.validator.detect_overfitting(
+                train_score, val_score, test_score
+            )
         
         # Статистическая валидация
         if test_result['trades']:
@@ -251,12 +296,12 @@ class AdvancedOptimizer:
             'best_params': best_params,
             'train_score': train_score,
             'val_score': val_score,
-            'test_score': test_result['score'],
+            'test_score': test_score,
             'test_metrics': test_result['metrics'],
             'test_trades': len(test_result['trades']) if test_result['trades'] else 0,
             'overfitting_detected': overfitting_detected,
             'statistical_valid': statistical_valid,
-            'success': test_result['score'] > 0 and not overfitting_detected and statistical_valid
+            'success': test_score > 0 and not overfitting_detected and statistical_valid
         }
         
         return window_result
@@ -344,8 +389,13 @@ class AdvancedOptimizer:
             interval: Интервал данных
         """
         try:
+            # Проверяем, что аргументы не None, чтобы удовлетворить type-checker
+            ticker_final = ticker or self.config['data_settings']['default_ticker']
+            period_final = period or self.config['data_settings']['default_period']
+            interval_final = interval or self.config['data_settings']['default_interval']
+
             # Загружаем данные
-            data = self.load_data(ticker, period, interval)
+            data = self.load_data(ticker_final, period_final, interval_final)
             
             # Запускаем оптимизацию
             results = self.run_walk_forward_optimization(data, strategy_config_path)
