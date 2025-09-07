@@ -36,7 +36,6 @@ class OptimizerUtils:
         successful_windows = [w for w in window_results if w.get('success', False)]
         
         if len(successful_windows) < 2:
-            self.logger.warning("Недостаточно успешных окон для поиска робастных параметров")
             return None
         
         # Собираем все параметры и их оценки
@@ -87,7 +86,6 @@ class OptimizerUtils:
             
             robust_params[param_name] = best_value
         
-        self.logger.info(f"Найдены робастные параметры: {robust_params}")
         return robust_params
     
     def calculate_parameter_stability(self, window_results: List[Dict]) -> Dict:
@@ -221,7 +219,7 @@ class OptimizerReporter:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         strategy_name = Path(results['strategy_config']).stem
         
-        self.logger.info("🎨 Генерируем отчеты и визуализации...")
+        # Генерация отчетов без лишних логов
         
         try:
             # 1. Основные графики walk-forward
@@ -244,10 +242,8 @@ class OptimizerReporter:
             # 6. JSON отчет
             self._save_json_report(results, strategy_name, timestamp)
             
-            self.logger.info(f"✅ Отчеты сохранены в {self.charts_dir}")
-            
         except Exception as e:
-            self.logger.error(f"❌ Ошибка генерации отчетов: {e}")
+            print(f"\n⚠️  Ошибка генерации отчетов: {e}")
     
     def _generate_walk_forward_charts(self, results: Dict, strategy_name: str, timestamp: str):
         """Генерирует основные графики walk-forward анализа."""
@@ -255,7 +251,6 @@ class OptimizerReporter:
         successful_windows = [w for w in window_results if w.get('success', False)]
         
         if not successful_windows:
-            self.logger.warning("Нет успешных окон для графиков")
             return
         
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
@@ -332,8 +327,6 @@ class OptimizerReporter:
         plt.savefig(filename, dpi=self.config['reporting']['chart_dpi'], 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        
-        self.logger.info(f"📊 График walk-forward сохранен: {filename}")
     
     def _generate_parameter_analysis_charts(self, results: Dict, strategy_name: str, timestamp: str):
         """Генерирует графики анализа параметров."""
@@ -426,8 +419,6 @@ class OptimizerReporter:
         plt.savefig(filename, dpi=self.config['reporting']['chart_dpi'], 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        
-        self.logger.info(f"📊 График параметров сохранен: {filename}")
     
     def _generate_detailed_statistics_chart(self, results: Dict, strategy_name: str, timestamp: str):
         """Генерирует детальную статистику."""
@@ -531,8 +522,6 @@ class OptimizerReporter:
         plt.savefig(filename, dpi=self.config['reporting']['chart_dpi'], 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        
-        self.logger.info(f"📊 График статистики сохранен: {filename}")
     
     def _generate_final_backtest_chart(self, results: Dict, data: pd.DataFrame, 
                                      strategy_name: str, timestamp: str):
@@ -579,8 +568,6 @@ class OptimizerReporter:
         plt.savefig(filename, dpi=self.config['reporting']['chart_dpi'], 
                    bbox_inches='tight', facecolor='white')
         plt.close()
-        
-        self.logger.info(f"📊 График финального бэктеста сохранен: {filename}")
     
     def _export_csv_reports(self, results: Dict, strategy_name: str, timestamp: str):
         """Экспортирует результаты в CSV файлы."""
@@ -597,11 +584,10 @@ class OptimizerReporter:
                 df_params = pd.DataFrame([results['best_parameters']])
                 csv_params = self.charts_dir / f"BestParams_{strategy_name}_{timestamp}.csv"
                 df_params.to_csv(csv_params, index=False)
-            
-            self.logger.info(f"💾 CSV отчеты сохранены в {self.charts_dir}")
+
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка экспорта CSV: {e}")
+            print(f"\n⚠️  Ошибка экспорта CSV: {e}")
     
     def _save_json_report(self, results: Dict, strategy_name: str, timestamp: str):
         """Сохраняет полный отчет в JSON."""
@@ -612,11 +598,10 @@ class OptimizerReporter:
             json_file = self.charts_dir / f"Report_{strategy_name}_{timestamp}.json"
             with open(json_file, 'w', encoding='utf-8') as f:
                 json.dump(json_results, f, indent=2, ensure_ascii=False, default=str)
-            
-            self.logger.info(f"💾 JSON отчет сохранен: {json_file}")
+
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка сохранения JSON: {e}")
+            print(f"\n⚠️  Ошибка сохранения JSON: {e}")
     
     def _prepare_for_json(self, obj):
         """Подготавливает объект для JSON сериализации."""

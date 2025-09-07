@@ -117,8 +117,8 @@ class OptimizerObjective:
             return final_score
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка в trial {trial_id}: {e}")
-            trial.set_user_attr('rejection_reason', f'Critical error: {str(e)}')
+            # Логируем только критические ошибки
+            trial.set_user_attr('rejection_reason', f'Critical error: {str(e)[:50]}...')
             self.rejection_stats['execution_errors'] += 1
             return self._get_penalty_score('critical_error')
     
@@ -166,13 +166,12 @@ class OptimizerObjective:
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка в evaluate_fixed_params: {e}")
             return {
                 'success': False,
                 'score': self._get_penalty_score('critical_error'),
                 'metrics': {},
                 'trades': [],
-                'error': str(e)
+                'error': str(e)[:100] + '...' if len(str(e)) > 100 else str(e)
             }
     
     def _load_strategy_config(self, config_path: str) -> Dict:

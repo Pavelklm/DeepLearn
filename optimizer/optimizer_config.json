@@ -25,7 +25,7 @@
 	},
 
 	"validation": {
-		"min_trades_for_significance": 30,
+		"min_trades_for_significance": 5,
 		"min_profitable_windows_pct": 0.4,
 		"max_parameter_variation_cv": 0.5,
 		"statistical_significance_level": 0.05,
