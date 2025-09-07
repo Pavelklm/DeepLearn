@@ -4,33 +4,33 @@
 		{
 			"name": "rsi_period",
 			"type": "int",
-			"low": 7,
-			"high": 25
+			"low": 5,
+			"high": 20
 		},
 		{
 			"name": "sma_period",
 			"type": "int",
-			"low": 20,
-			"high": 100
+			"low": 10,
+			"high": 50
 		},
 		{
 			"name": "oversold_level",
 			"type": "int",
-			"low": 25,
-			"high": 45
+			"low": 15,
+			"high": 50
 		},
 		{
 			"name": "tp_multiplier",
 			"type": "float",
-			"low": 1.02,
-			"high": 1.15,
+			"low": 1.01,
+			"high": 1.2,
 			"step": 0.005
 		},
 		{
 			"name": "overbought_level",
 			"type": "int",
-			"low": 65,
-			"high": 80
+			"low": 50,
+			"high": 85
 		}
 	]
 }
