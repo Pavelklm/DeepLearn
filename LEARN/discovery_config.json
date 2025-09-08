@@ -1,28 +1,17 @@
 {
+	"logging": {
+		"level": "INFO"
+	},
 	"data_settings": {
 		"default_ticker": "BTC-USD",
 		"default_period": "2y",
-		"default_interval": "1h",
-		"min_data_points": 1000
+		"default_interval": "1h"
 	},
-
-	"evolution": {
-		"population_size": 500,
-		"generations": 30,
-		"elite_ratio": 0.1,
-		"crossover_rate": 0.8,
-		"mutation_rate": 0.1,
-		"tournament_size": 5
+	"performance": {
+		"max_workers": 15,
+		"initial_balance": 10000,
+		"commission": 0.001
 	},
-
-	"rule_generation": {
-		"min_conditions": 2,
-		"max_conditions": 4,
-		"enable_crossovers": true,
-		"enable_divergence": false,
-		"divergence_lookback": [3, 10]
-	},
-
 	"indicators": {
 		"enabled_indicators": [
 			"RSI",
@@ -42,20 +31,14 @@
 			"KAMA"
 		],
 		"parameters": {
-			"RSI": {
-				"timeperiod": { "min": 10, "max": 30, "type": "int" }
-			},
+			"RSI": { "timeperiod": { "min": 10, "max": 30, "type": "int" } },
 			"MACD": {
 				"fastperiod": { "min": 8, "max": 15, "type": "int" },
 				"slowperiod": { "min": 20, "max": 30, "type": "int" },
 				"signalperiod": { "min": 7, "max": 12, "type": "int" }
 			},
-			"SMA": {
-				"timeperiod": { "min": 10, "max": 50, "type": "int" }
-			},
-			"EMA": {
-				"timeperiod": { "min": 10, "max": 50, "type": "int" }
-			},
+			"SMA": { "timeperiod": { "min": 10, "max": 50, "type": "int" } },
+			"EMA": { "timeperiod": { "min": 10, "max": 50, "type": "int" } },
 			"BBANDS": {
 				"timeperiod": { "min": 15, "max": 25, "type": "int" },
 				"nbdevup": { "min": 1.5, "max": 2.5, "type": "float" },
@@ -66,111 +49,76 @@
 				"slowk_period": { "min": 3, "max": 10, "type": "int" },
 				"slowd_period": { "min": 3, "max": 10, "type": "int" }
 			},
-			"ADX": {
-				"timeperiod": { "min": 10, "max": 20, "type": "int" }
-			},
-			"CCI": {
-				"timeperiod": { "min": 15, "max": 25, "type": "int" }
-			},
-			"MFI": {
-				"timeperiod": { "min": 10, "max": 20, "type": "int" }
-			},
-			"WILLR": {
-				"timeperiod": { "min": 10, "max": 20, "type": "int" }
-			},
-			"ATR": {
-				"timeperiod": { "min": 10, "max": 20, "type": "int" }
-			},
+			"ADX": { "timeperiod": { "min": 10, "max": 20, "type": "int" } },
+			"CCI": { "timeperiod": { "min": 15, "max": 25, "type": "int" } },
+			"MFI": { "timeperiod": { "min": 10, "max": 20, "type": "int" } },
+			"WILLR": { "timeperiod": { "min": 10, "max": 20, "type": "int" } },
+			"ATR": { "timeperiod": { "min": 10, "max": 20, "type": "int" } },
 			"OBV": {},
-			"TEMA": {
-				"timeperiod": { "min": 15, "max": 35, "type": "int" }
-			},
-			"DEMA": {
-				"timeperiod": { "min": 15, "max": 35, "type": "int" }
-			},
-			"KAMA": {
-				"timeperiod": { "min": 15, "max": 35, "type": "int" }
-			}
+			"TEMA": { "timeperiod": { "min": 15, "max": 35, "type": "int" } },
+			"DEMA": { "timeperiod": { "min": 15, "max": 35, "type": "int" } },
+			"KAMA": { "timeperiod": { "min": 15, "max": 35, "type": "int" } }
 		}
 	},
-
-	"signal_generation": {
-		"min_history_bars": 50,
-		"supported_signals": [
-			"LONG_ENTRY",
-			"LONG_EXIT",
-			"SHORT_ENTRY",
-			"SHORT_EXIT",
-			"HOLD"
-		]
+	"rule_generation": {
+		"min_conditions": 1,
+		"max_conditions": 3,
+		"enable_crossovers": true
 	},
-
-	"risk_management": {
-		"stop_loss_range": [0.01, 0.05],
-		"take_profit_range": [0.02, 0.08],
-		"trailing_stop_range": [0.015, 0.04],
-		"position_sizing": {
-			"method": "fixed_percent",
-			"value": 0.02
+	"evolution": {
+		"population_size": 50,
+		"generations": 5,
+		"elite_ratio": 0.2,
+		"crossover_rate": 0.7,
+		"mutation_rate": 0.3,
+		"tournament_size": 3,
+		"mutation": {
+			"enabled": true,
+			"types": [
+				"modify_indicator_param",
+				"modify_threshold",
+				"change_logic_operator",
+				"modify_risk_rules"
+			]
 		}
 	},
-
 	"validation": {
 		"min_trades_threshold": 5,
-		"max_trades_threshold": 60,
-		"max_drawdown_threshold": 0.25,
-		"min_win_rate": 0.25,
-		"min_profit_factor": 1.1,
-		"max_consecutive_losses": 10
+		"max_trades_threshold": 2000,
+		"min_win_rate": 0.2,
+		"max_drawdown_threshold": 0.3
 	},
-
 	"scoring": {
 		"weights": {
 			"sharpe_ratio": 0.3,
-			"profit_factor": 0.25,
+			"profit_factor": 0.4,
 			"win_rate": 0.2,
-			"trade_frequency": 0.15,
-			"drawdown_penalty": 0.1
+			"trade_frequency": 0.1,
+			"drawdown_penalty": 0.2
 		},
-		"optimal_trade_range": [8, 35],
+		"optimal_trade_range": [10, 50],
 		"penalties": {
-			"insufficient_signals": -50.0,
-			"backtest_failed": -40.0,
-			"insufficient_trades": -30.0,
-			"excessive_trades": -25.0,
-			"unprofitable": -20.0,
-			"high_drawdown": -35.0,
-			"low_win_rate": -15.0,
-			"critical_error": -60.0,
-			"default": -45.0
+			"insufficient_signals": -10,
+			"insufficient_trades": -5,
+			"excessive_trades": -3,
+			"unprofitable": -8,
+			"low_win_rate": -4,
+			"high_drawdown": -6,
+			"backtest_failed": -12,
+			"critical_error": -15,
+			"default": -10
 		}
 	},
-
+	"risk_management": {
+		"stop_loss_range": [0.02, 0.08],
+		"take_profit_range": [0.03, 0.12]
+	},
+	"signal_generation": {
+		"min_history_bars": 50
+	},
 	"saving": {
-		"strategy_dir": "strategies/new",
-		"config_dir": "configs/new",
-		"results_dir": "LEARN/results",
-		"save_checkpoints": true,
-		"checkpoint_interval": 5
-	},
-
-	"logging": {
-		"level": "INFO",
-		"detailed_generation_stats": true,
-		"save_logs": true,
-		"log_file": "LEARN/evolution.log"
-	},
-
-	"performance": {
-		"initial_balance": 10000,
-		"commission": 0.001,
-		"slippage": 0.0005
-	},
-
-	"experimental": {
-		"adaptive_population": false,
-		"dynamic_mutation_rate": false,
-		"multi_objective_optimization": false,
-		"niching": false
+		"strategy_dir": "../strategies/new",
+		"config_dir": "../configs/new",
+		"results_dir": "../results"
 	}
 }

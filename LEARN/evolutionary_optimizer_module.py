@@ -15,6 +15,9 @@ from tqdm import tqdm
 import pandas as pd
 import yfinance as yf
 import talib
+import multiprocessing as mp
+from functools import partial
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Исправляем пути для импортов
 import sys
@@ -36,6 +39,123 @@ except ImportError as e:
     print(f"   python LEARN/evolutionary_optimizer_module.py")
     raise
 
+
+def evaluate_individual_worker(individual: Dict, config: Dict, data_dict: Dict) -> Dict:
+    """
+    Worker функция для параллельной оценки особей.
+    Выполняется в отдельном процессе.
+    """
+    try:
+        # Восстанавливаем DataFrame из словаря
+        data = pd.DataFrame(data_dict['data'], index=pd.to_datetime(data_dict['index']))
+        
+        # Создаем генератор сигналов
+        signal_generator = SignalGenerator(config)
+        signals = signal_generator.generate_signals(individual, data)
+        
+        if not signals or len(signals) < config['validation']['min_trades_threshold']:
+            return {
+                'success': False,
+                'score': config['scoring']['penalties']['insufficient_signals'],
+                'metrics': {},
+                'trades': [],
+                'signals_count': len(signals) if signals else 0
+            }
+        
+        # Запускаем легковесный бэктест
+        runner = LightweightBacktester(config)
+        backtest_result = runner.run_backtest(signals, data)
+        
+        if not backtest_result['success']:
+            return {
+                'success': False,
+                'score': config['scoring']['penalties']['backtest_failed'],
+                'metrics': {},
+                'trades': [],
+                'error': backtest_result.get('error', 'Unknown error')
+            }
+        
+        # Анализируем результаты (упрощенно)
+        trades = backtest_result['trades']
+        metrics = backtest_result.get('metrics', {})
+        
+        if not trades:
+            return {
+                'success': False,
+                'score': config['scoring']['penalties']['insufficient_trades'],
+                'metrics': {},
+                'trades': []
+            }
+        
+        # Быстрая валидация
+        total_profit = metrics.get('total_profit', 0)
+        win_rate = metrics.get('win_rate', 0)
+        
+        if total_profit <= 0:
+            return {
+                'success': False,
+                'score': config['scoring']['penalties']['unprofitable'],
+                'metrics': metrics,
+                'trades': trades
+            }
+        
+        if win_rate < config['validation']['min_win_rate']:
+            return {
+                'success': False,
+                'score': config['scoring']['penalties']['low_win_rate'],
+                'metrics': metrics,
+                'trades': trades
+            }
+        
+        # Быстрый расчет оценки
+        weights = config['scoring']['weights']
+        return_pct = metrics.get('return_pct', 0)
+        trade_count = len(trades)
+        
+        # Упрощенная формула оценки
+        profit_component = max(0, return_pct / 100) * weights['profit_factor']
+        win_rate_component = win_rate * weights['win_rate']
+        
+        # Бонус за оптимальное количество сделок
+        optimal_range = config['scoring']['optimal_trade_range']
+        if optimal_range[0] <= trade_count <= optimal_range[1]:
+            trade_bonus = weights['trade_frequency']
+        else:
+            trade_bonus = weights['trade_frequency'] * 0.5
+        
+        final_score = profit_component + win_rate_component + trade_bonus
+        
+        return {
+            'success': True,
+            'score': max(0, final_score),
+            'metrics': metrics,
+            'trades': trades,
+            'trade_count': trade_count
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'score': config['scoring']['penalties']['critical_error'],
+            'metrics': {},
+            'trades': [],
+            'error': str(e)
+        }
+
+
+class SimpleMetrics:
+    """
+    Простые метрики для легковесного бэктеста.
+    """
+    def __init__(self, total_profit: float, return_pct: float, total_trades: int, win_rate: float):
+        self.total_profit = total_profit
+        self.return_pct = return_pct
+        self.total_trades = total_trades
+        self.win_rate = win_rate
+        # Упрощенные метрики
+        self.sharpe_ratio = max(0, return_pct / 10)  # Примитивная оценка
+        self.max_drawdown_pct = abs(min(0, return_pct / 2))  # Оценка просадки
+        
 
 class StrategyDiscoveryObjective:
     """
@@ -63,13 +183,25 @@ class StrategyDiscoveryObjective:
             {"score": float, "metrics": {...}, "trades": [...], "success": bool}
         """
         self.evaluation_count += 1
+        start_time = time.time()
+        # max_evaluation_time = 30  # Убираем таймаут пока
         
         try:
             # Генерируем торговые сигналы
+            if self.evaluation_count % 100 == 1:  # Логируем каждую 100-ю оценку
+                self.logger.info(f"    🔍 Генерируем сигналы для оценки #{self.evaluation_count}")
+            
+            signal_start = time.time()
             signal_generator = SignalGenerator(self.config)
             signals = signal_generator.generate_signals(candidate, data)
+            signal_time = time.time() - signal_start
+            
+            # Убираем проверки таймаута
             
             if not signals or len(signals) < self.config['validation']['min_trades_threshold']:
+                if self.evaluation_count % 50 == 1:  # Логируем причину провала
+                    self.logger.warning(f"    ⚠️ Недостаточно сигналов: {len(signals) if signals else 0}/"
+                                       f"{self.config['validation']['min_trades_threshold']}")
                 return {
                     'success': False,
                     'score': self._get_penalty_score('insufficient_signals'),
@@ -78,11 +210,20 @@ class StrategyDiscoveryObjective:
                     'signals_count': len(signals) if signals else 0
                 }
             
+            if self.evaluation_count % 100 == 1:
+                self.logger.info(f"    💹 Запускаем бэктест с {len(signals)} сигналами (сигналы: {signal_time:.2f}с)")
+
             # Запускаем бэктест
-            runner = DynamicStrategyRunner(self.config)
+            backtest_start = time.time()
+            runner = LightweightBacktester(self.config)
             backtest_result = runner.run_backtest(signals, data)
+            backtest_time = time.time() - backtest_start
+            
+            # Убираем проверку таймаута
             
             if not backtest_result['success']:
+                if self.evaluation_count % 50 == 1:
+                    self.logger.warning(f"    ⚠️ Бэктест провалился: {backtest_result.get('error', 'Unknown error')}")
                 return {
                     'success': False,
                     'score': self._get_penalty_score('backtest_failed'),
@@ -92,11 +233,17 @@ class StrategyDiscoveryObjective:
                 }
             
             # Анализируем результаты
+            analysis_start = time.time()
             analysis = self._analyze_results(backtest_result)
+            analysis_time = time.time() - analysis_start
             
             # Валидируем качество
+            validation_start = time.time()
             validation = self._validate_quality(analysis)
+            validation_time = time.time() - validation_start
             if not validation['valid']:
+                if self.evaluation_count % 50 == 1:
+                    self.logger.warning(f"    ⚠️ Валидация не прошла: {validation['reason']}")
                 return {
                     'success': False,
                     'score': self._get_penalty_score(validation['category']),
@@ -106,7 +253,20 @@ class StrategyDiscoveryObjective:
                 }
             
             # Рассчитываем финальную оценку
+            scoring_start = time.time()
             final_score = self._calculate_score(analysis)
+            scoring_time = time.time() - scoring_start
+            
+            total_time = time.time() - start_time
+            
+            # Логируем время каждой 50-й оценки
+            if self.evaluation_count % 50 == 0:
+                self.logger.info(
+                    f"    ⏱️ Оценка #{self.evaluation_count}: {total_time:.2f}с "
+                    f"(сигналы: {signal_time:.2f}с, бэктест: {backtest_time:.2f}с, "
+                    f"анализ: {analysis_time:.2f}с, валидация: {validation_time:.2f}с, "
+                    f"оценка: {scoring_time:.2f}с)"
+                )
             
             self.successful_evaluations += 1
             
@@ -119,7 +279,8 @@ class StrategyDiscoveryObjective:
             }
             
         except Exception as e:
-            self.logger.warning(f"Ошибка оценки кандидата: {e}")
+            total_time = time.time() - start_time
+            self.logger.warning(f"    ⚠️ Ошибка оценки #{self.evaluation_count} за {total_time:.2f}с: {e}")
             return {
                 'success': False,
                 'score': self._get_penalty_score('critical_error'),
@@ -129,8 +290,9 @@ class StrategyDiscoveryObjective:
             }
     
     def _analyze_results(self, backtest_result: Dict) -> Dict:
-        """Анализирует результаты бэктеста."""
+        """Анализирует результаты легковесного бэктеста."""
         trades = backtest_result['trades']
+        metrics = backtest_result.get('metrics', {})
         
         if not trades:
             return {
@@ -140,22 +302,22 @@ class StrategyDiscoveryObjective:
                 'basic_stats': self._get_empty_stats()
             }
         
-        # Рассчитываем метрики
-        initial_balance = self.config.get('initial_balance', 10000)
-        metrics_calculator = MetricsCalculator(
-            trade_history=trades,
-            initial_balance=initial_balance
-        )
-        metrics = metrics_calculator.calculate_all_metrics()
+        # Используем метрики из легковесного бэктеста
+        total_profit = metrics.get('total_profit', 0)
+        winning_trades = metrics.get('winning_trades', 0)
+        win_rate = metrics.get('win_rate', 0) * 100  # Преобразуем в проценты
         
-        # Базовая статистика
-        total_profit = sum(t.get('profit', 0) for t in trades)
-        winning_trades = sum(1 for t in trades if t.get('profit', 0) > 0)
-        win_rate = (winning_trades / len(trades)) * 100 if trades else 0
+        # Создаем упрощенные метрики
+        simple_metrics = SimpleMetrics(
+            total_profit=total_profit,
+            return_pct=metrics.get('return_pct', 0),
+            total_trades=len(trades),
+            win_rate=win_rate
+        )
         
         basic_stats = {
             'total_profit': total_profit,
-            'total_profit_pct': (total_profit / initial_balance) * 100 if initial_balance > 0 else 0,
+            'total_profit_pct': metrics.get('return_pct', 0),
             'trade_count': len(trades),
             'winning_trades': winning_trades,
             'losing_trades': len(trades) - winning_trades,
@@ -166,7 +328,7 @@ class StrategyDiscoveryObjective:
         return {
             'trades': trades,
             'trade_count': len(trades),
-            'metrics': metrics,
+            'metrics': simple_metrics,
             'basic_stats': basic_stats
         }
     
@@ -304,6 +466,11 @@ class SignalGenerator:
     def __init__(self, config: Dict):
         self.config = config
         self.logger = logging.getLogger(f"{__name__}.SignalGenerator")
+        self.current_position = None  # None, "LONG", "SHORT"
+        
+        # Статистика для логирования
+        self.generation_count = 0
+        self.successful_generations = 0
         
     def generate_signals(self, candidate: Dict, data: pd.DataFrame) -> List[Dict]:
         """
@@ -313,25 +480,44 @@ class SignalGenerator:
             List[{"timestamp": datetime, "signal": str, "price": float}]
             где signal in ["LONG_ENTRY", "LONG_EXIT", "SHORT_ENTRY", "SHORT_EXIT", "HOLD"]
         """
+        self.generation_count += 1
+        
         try:
+            # Сбрасываем позицию для новой стратегии
+            self.current_position = None
+            
             # Подготавливаем данные с индикаторами
             enriched_data = self._add_indicators(data.copy(), candidate['indicators'])
+            
+            # Проверяем, что индикаторы добавились
+            new_columns = [col for col in enriched_data.columns if col not in data.columns]
+            if len(candidate['indicators']) > 0 and len(new_columns) == 0:
+                self.logger.warning(f"Индикаторы не добавились! Запрошено: {list(candidate['indicators'].keys())}")
+                return []
+            
+            # Логируем результат добавления индикаторов
+            if self.generation_count % 100 == 1:  # Каждые 100 поколений
+                self.logger.info(f"Добавлено индикаторов: {new_columns}")
             
             # Парсим торговые правила
             rules = self._parse_trading_rules(candidate['trading_rules'])
             
             # Генерируем сигналы
             signals = []
-            current_position = None  # None, "LONG", "SHORT"
+            loop_iterations = 0
+            holds_count = 0
             
             for i in range(len(enriched_data)):
                 if i < self.config['signal_generation']['min_history_bars']:
                     continue  # Пропускаем первые бары для корректного расчета индикаторов
                 
+                loop_iterations += 1
                 row = enriched_data.iloc[i]
-                signal = self._evaluate_rules(rules, row, enriched_data, i, current_position)
+                signal = self._evaluate_rules(rules, row, enriched_data, i, self.current_position)
                 
-                if signal != "HOLD":
+                if signal == "HOLD":
+                    holds_count += 1
+                else:
                     signals.append({
                         'timestamp': row.name,
                         'signal': signal,
@@ -340,37 +526,103 @@ class SignalGenerator:
                     
                     # Обновляем текущую позицию
                     if signal in ["LONG_ENTRY"]:
-                        current_position = "LONG"
+                        self.current_position = "LONG"
                     elif signal in ["SHORT_ENTRY"]:
-                        current_position = "SHORT"
+                        self.current_position = "SHORT"
                     elif signal in ["LONG_EXIT", "SHORT_EXIT"]:
-                        current_position = None
+                        self.current_position = None
+            
+            # Логируем результаты генерации сигналов
+            if len(signals) > 0:
+                self.successful_generations += 1
+            
+            if len(signals) == 0 and loop_iterations > 0:
+                if self.generation_count % 50 == 0:  # Каждые 50 поколений
+                    self.logger.warning(
+                        f"Стратегия #{self.generation_count}: Ни одного сигнала! Итераций: {loop_iterations}, "
+                        f"HOLD: {holds_count}, Условия: {len(rules['long_entry']) + len(rules['short_entry'])}"
+                    )
+            elif self.generation_count % 200 == 0:  # Каждые 200 поколений - успешная статистика
+                success_rate = (self.successful_generations / self.generation_count) * 100
+                self.logger.info(
+                    f"Статистика генерации сигналов: {self.successful_generations}/{self.generation_count} "
+                    f"({success_rate:.1f}% успешных)"
+                )
             
             return signals
             
         except Exception as e:
-            self.logger.error(f"Ошибка генерации сигналов: {e}")
+            self.logger.error(f"Ошибка генерации сигналов для стратегии #{self.generation_count}: {e}")
             return []
     
     def _add_indicators(self, data: pd.DataFrame, indicators: Dict) -> pd.DataFrame:
         """Добавляет индикаторы к данным."""
         enriched_data = data.copy()
         
-        # Подготавливаем основные массивы
-        close = data['Close'].values
-        high = data['High'].values
-        low = data['Low'].values
-        volume = data['Volume'].values if 'Volume' in data.columns else None
+        # Очищаем данные от NaN и приводим к правильному формату
+        clean_data = data.dropna().copy()
+        if len(clean_data) < 50:  # Минимум данных для индикаторов
+            self.logger.warning("Недостаточно данных после очистки NaN")
+            return enriched_data
+        
+        # Исправляем проблему с мультииндексными колонками от yfinance
+        if isinstance(clean_data.columns, pd.MultiIndex):
+            clean_data.columns = clean_data.columns.droplevel(1)
+            enriched_data.columns = enriched_data.columns.droplevel(1) if isinstance(enriched_data.columns, pd.MultiIndex) else enriched_data.columns
+        
+        # Подготавливаем основные массивы (проверяем наличие колонок)
+        try:
+            close = clean_data['Close'].astype(float).values
+            high = clean_data['High'].astype(float).values
+            low = clean_data['Low'].astype(float).values
+            volume = clean_data['Volume'].astype(float).values if 'Volume' in clean_data.columns else None
+        except KeyError as e:
+            self.logger.error(f"Отсутствует колонка: {e}. Доступные колонки: {list(clean_data.columns)}")
+            return enriched_data
+        except Exception as e:
+            self.logger.error(f"Ошибка подготовки данных: {e}")
+            return enriched_data
+        
+        # Проверяем размерности массивов
+        if len(close) != len(high) or len(close) != len(low):
+            self.logger.error("Неодинаковая длина массивов OHLC")
+            return enriched_data
+        
+        # Проверяем форму массивов - должны быть одномерными
+        if len(close.shape) > 1:
+            self.logger.debug(f"Преобразуем многомерные массивы в одномерные")
+        
+        # Убеждаемся, что данные корректны для TA-Lib
+        # Принудительно делаем одномерными и контигуоусными
+        close = np.ascontiguousarray(close.flatten(), dtype=np.float64)
+        high = np.ascontiguousarray(high.flatten(), dtype=np.float64)
+        low = np.ascontiguousarray(low.flatten(), dtype=np.float64)
+        if volume is not None:
+            volume = np.ascontiguousarray(volume.flatten(), dtype=np.float64)
+        
+        # Проверяем, что TA-Lib работает корректно
+        try:
+            test_sma = talib.SMA(close[:100], timeperiod=10)  # Короткий тест
+        except Exception as e:
+            self.logger.error(f"TA-Lib не работает: {e}")
+            return enriched_data
         
         for indicator_name, params in indicators.items():
             try:
+                # Проверка минимального количества данных
+                min_periods = params.get('timeperiod', 30) if 'timeperiod' in params else 30
+                if len(close) < min_periods + 10:  # +10 для запаса
+                    self.logger.warning(f"Недостаточно данных для {indicator_name}: {len(close)} < {min_periods + 10}")
+                    continue
+                    
                 if hasattr(talib, indicator_name.upper()):
                     indicator_func = getattr(talib, indicator_name.upper())
                     
                     # Вызываем индикатор и добавляем результат в DataFrame
                     if indicator_name.upper() == 'RSI':
                         result = indicator_func(close, timeperiod=params.get('timeperiod', 14))
-                        enriched_data[f'RSI_{params.get("timeperiod", 14)}'] = result
+                        # Используем базовое имя вместо имени с параметрами
+                        enriched_data['RSI'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'MACD':
                         macd, macdsignal, macdhist = indicator_func(
@@ -379,17 +631,17 @@ class SignalGenerator:
                             slowperiod=params.get('slowperiod', 26),
                             signalperiod=params.get('signalperiod', 9)
                         )
-                        enriched_data['MACD'] = macd
-                        enriched_data['MACD_signal'] = macdsignal
-                        enriched_data['MACD_hist'] = macdhist
+                        enriched_data['MACD'] = pd.Series(macd, index=clean_data.index)
+                        enriched_data['MACD_signal'] = pd.Series(macdsignal, index=clean_data.index)
+                        enriched_data['MACD_hist'] = pd.Series(macdhist, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'SMA':
                         result = indicator_func(close, timeperiod=params.get('timeperiod', 20))
-                        enriched_data[f'SMA_{params.get("timeperiod", 20)}'] = result
+                        enriched_data['SMA'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'EMA':
                         result = indicator_func(close, timeperiod=params.get('timeperiod', 20))
-                        enriched_data[f'EMA_{params.get("timeperiod", 20)}'] = result
+                        enriched_data['EMA'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'BBANDS':
                         upper, middle, lower = indicator_func(
@@ -398,9 +650,9 @@ class SignalGenerator:
                             nbdevup=params.get('nbdevup', 2),
                             nbdevdn=params.get('nbdevdn', 2)
                         )
-                        enriched_data['BB_upper'] = upper
-                        enriched_data['BB_middle'] = middle
-                        enriched_data['BB_lower'] = lower
+                        enriched_data['BB_upper'] = pd.Series(upper, index=clean_data.index)
+                        enriched_data['BB_middle'] = pd.Series(middle, index=clean_data.index)
+                        enriched_data['BB_lower'] = pd.Series(lower, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'STOCH':
                         slowk, slowd = indicator_func(
@@ -409,46 +661,46 @@ class SignalGenerator:
                             slowk_period=params.get('slowk_period', 3),
                             slowd_period=params.get('slowd_period', 3)
                         )
-                        enriched_data['STOCH_k'] = slowk
-                        enriched_data['STOCH_d'] = slowd
+                        enriched_data['STOCH_k'] = pd.Series(slowk, index=clean_data.index)
+                        enriched_data['STOCH_d'] = pd.Series(slowd, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'ADX':
                         result = indicator_func(high, low, close, timeperiod=params.get('timeperiod', 14))
-                        enriched_data[f'ADX_{params.get("timeperiod", 14)}'] = result
+                        enriched_data['ADX'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'CCI':
                         result = indicator_func(high, low, close, timeperiod=params.get('timeperiod', 14))
-                        enriched_data[f'CCI_{params.get("timeperiod", 14)}'] = result
+                        enriched_data['CCI'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'MFI':
                         if volume is not None:
                             result = indicator_func(high, low, close, volume, timeperiod=params.get('timeperiod', 14))
-                            enriched_data[f'MFI_{params.get("timeperiod", 14)}'] = result
+                            enriched_data['MFI'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'WILLR':
                         result = indicator_func(high, low, close, timeperiod=params.get('timeperiod', 14))
-                        enriched_data[f'WILLR_{params.get("timeperiod", 14)}'] = result
+                        enriched_data['WILLR'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'ATR':
                         result = indicator_func(high, low, close, timeperiod=params.get('timeperiod', 14))
-                        enriched_data[f'ATR_{params.get("timeperiod", 14)}'] = result
+                        enriched_data['ATR'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'OBV':
                         if volume is not None:
                             result = indicator_func(close, volume)
-                            enriched_data['OBV'] = result
+                            enriched_data['OBV'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'TEMA':
                         result = indicator_func(close, timeperiod=params.get('timeperiod', 30))
-                        enriched_data[f'TEMA_{params.get("timeperiod", 30)}'] = result
+                        enriched_data['TEMA'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'DEMA':
                         result = indicator_func(close, timeperiod=params.get('timeperiod', 30))
-                        enriched_data[f'DEMA_{params.get("timeperiod", 30)}'] = result
+                        enriched_data['DEMA'] = pd.Series(result, index=clean_data.index)
                     
                     elif indicator_name.upper() == 'KAMA':
                         result = indicator_func(close, timeperiod=params.get('timeperiod', 30))
-                        enriched_data[f'KAMA_{params.get("timeperiod", 30)}'] = result
+                        enriched_data['KAMA'] = pd.Series(result, index=clean_data.index)
                     
                     else:
                         self.logger.warning(f"Индикатор {indicator_name} не обработан")
@@ -458,7 +710,8 @@ class SignalGenerator:
             except Exception as e:
                 self.logger.warning(f"Ошибка добавления индикатора {indicator_name}: {e}")
         
-        return enriched_data
+        # Возвращаем обогащенные данные с тем же индексом, что и исходные
+        return enriched_data.reindex(data.index)
     
     def _parse_trading_rules(self, rules: Dict) -> Dict:
         """Парсит правила торговли."""
@@ -497,6 +750,9 @@ class SignalGenerator:
         """Оценивает список условий."""
         if not conditions:
             return False
+        
+        # Логируем проверку условий через интервалы (убираем для упрощения)
+        pass  # Убираем лишнее логирование для чистоты
         
         results = []
         for condition in conditions:
@@ -539,7 +795,24 @@ class SignalGenerator:
             return False
         
         value = row[indicator]
+        
+        # Проверяем, что значение является скаляром
+        if hasattr(value, '__len__') and not isinstance(value, str):
+            # Если это Series или массив, берем последнее значение
+            if hasattr(value, 'iloc'):
+                value = value.iloc[-1] if len(value) > 0 else np.nan
+            else:
+                value = value[-1] if len(value) > 0 else np.nan
+        
+        # Проверяем на NaN
         if pd.isna(value):
+            return False
+        
+        # Преобразуем в float для безопасности
+        try:
+            value = float(value)
+            threshold = float(threshold)
+        except (ValueError, TypeError):
             return False
         
         if operator == '>':
@@ -567,10 +840,29 @@ class SignalGenerator:
         if indicator1 not in data.columns or indicator2 not in data.columns:
             return False
         
-        current_val1 = data.iloc[index][indicator1]
-        current_val2 = data.iloc[index][indicator2]
-        prev_val1 = data.iloc[index-1][indicator1]
-        prev_val2 = data.iloc[index-1][indicator2]
+        # Получаем значения и преобразуем в скаляры
+        def safe_scalar(val):
+            if hasattr(val, '__len__') and not isinstance(val, str):
+                if hasattr(val, 'iloc'):
+                    return val.iloc[-1] if len(val) > 0 else np.nan
+                else:
+                    return val[-1] if len(val) > 0 else np.nan
+            return val
+        
+        try:
+            current_val1 = safe_scalar(data.iloc[index][indicator1])
+            current_val2 = safe_scalar(data.iloc[index][indicator2])
+            prev_val1 = safe_scalar(data.iloc[index-1][indicator1])
+            prev_val2 = safe_scalar(data.iloc[index-1][indicator2])
+            
+            # Преобразуем в float
+            current_val1 = float(current_val1)
+            current_val2 = float(current_val2)
+            prev_val1 = float(prev_val1)
+            prev_val2 = float(prev_val2)
+            
+        except (ValueError, TypeError, IndexError):
+            return False
         
         if any(pd.isna([current_val1, current_val2, prev_val1, prev_val2])):
             return False
@@ -593,6 +885,111 @@ class SignalGenerator:
         return False
 
 
+class LightweightBacktester:
+    """
+    Легковесный бэктестер без тяжелой инициализации Playground.
+    Выполняет только базовую симуляцию торговли.
+    """
+    
+    def __init__(self, config: Dict):
+        self.config = config
+        self.initial_balance = config.get('performance', {}).get('initial_balance', 10000)
+        self.commission = config.get('performance', {}).get('commission', 0.001)
+        
+    def run_backtest(self, signals: List[Dict], data: pd.DataFrame) -> Dict:
+        """
+        Быстрый бэктест с минимальными накладными расходами.
+        
+        Returns:
+            {"success": bool, "trades": [...], "metrics": {...}}
+        """
+        try:
+            trades = []
+            balance = self.initial_balance
+            position = None
+            position_size = 0
+            entry_price = 0
+            
+            # Создаем индекс сигналов для быстрого поиска
+            signals_dict = {sig['timestamp']: sig for sig in signals}
+            
+            for timestamp, row in data.iterrows():
+                signal_data = signals_dict.get(timestamp)
+                
+                if signal_data:
+                    signal_type = signal_data['signal']
+                    price = float(row['Close'])
+                    
+                    if signal_type in ['LONG_ENTRY', 'SHORT_ENTRY'] and position is None:
+                        # Открываем позицию
+                        position = 'LONG' if signal_type == 'LONG_ENTRY' else 'SHORT'
+                        position_size = (balance * 0.02) / price  # 2% от баланса
+                        entry_price = price
+                        balance -= position_size * price * (1 + self.commission)
+                        
+                    elif signal_type in ['LONG_EXIT', 'SHORT_EXIT'] and position is not None:
+                        # Закрываем позицию
+                        exit_price = price
+
+                        profit = 0.0
+                        commission_cost = 0.0
+                        
+                        if position == 'LONG':
+                            profit = (exit_price - entry_price) * position_size
+                        elif position == 'SHORT':
+                            profit = (entry_price - exit_price) * position_size
+
+                        # Комиссия с обеих сторон
+                        commission_cost = (entry_price + exit_price) * position_size * self.commission
+
+                        # Итоговый баланс
+                        balance += profit - commission_cost
+                        
+                        # Записываем сделку
+                        trades.append({
+                            'entry_time': timestamp,  # Упрощаем - используем время выхода
+                            'exit_time': timestamp,
+                            'direction': position,
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'size': position_size,
+                            'profit': profit,
+                            'commission': position_size * entry_price * self.commission * 2
+                        })
+                        
+                        position = None
+                        position_size = 0
+                        entry_price = 0
+            
+            # Базовые метрики
+            total_profit = sum(t['profit'] for t in trades)
+            winning_trades = sum(1 for t in trades if t['profit'] > 0)
+            total_trades = len(trades)
+            
+            metrics = {
+                'total_profit': total_profit,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'win_rate': (winning_trades / total_trades) if total_trades > 0 else 0,
+                'final_balance': balance + total_profit,
+                'return_pct': ((balance + total_profit) / self.initial_balance - 1) * 100
+            }
+            
+            return {
+                'success': True,
+                'trades': trades,
+                'metrics': metrics
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'trades': [],
+                'metrics': {},
+                'error': str(e)
+            }
+
+
 class DynamicStrategyRunner:
     """
     Запускает бэктесты сгенерированных стратегий без создания файлов.
@@ -610,23 +1007,37 @@ class DynamicStrategyRunner:
             {"success": bool, "trades": [...], "error": str}
         """
         try:
-            # Создаем временную стратегию
+            # Создаём временную стратегию
             temp_strategy = self._create_temp_strategy(signals)
             
             # Конфигурация для бэктеста
             bot_config = {
                 "bot_name": f"discovery_test_{int(time.time())}",
-                "strategy_instance": temp_strategy,
+                "strategy_file": "dummy",  # Любое значение, переопределим ниже
                 "symbol": self.config['data_settings']['default_ticker'],
-                "risk_config_file": 'configs/live_default.json',
+                "risk_config_file": '../configs/live_default.json',
                 "generate_chart": False
             }
             
+            # Создаём наследника Playground который может работать с готовой стратегией
+            class CustomPlayground(Playground):
+                def __init__(self, ohlcv_data, bot_config, bot_name, custom_strategy=None):
+                    self.custom_strategy = custom_strategy
+                    super().__init__(ohlcv_data, bot_config, bot_name)
+                    
+                def _prepare_strategy(self):
+                    # Переопределяем метод чтобы использовать кастомную стратегию
+                    if self.custom_strategy:
+                        return self.custom_strategy
+                    else:
+                        return super()._prepare_strategy()
+            
             # Запускаем бэктест
-            backtest = Playground(
+            backtest = CustomPlayground(
                 ohlcv_data=data,
                 bot_config=bot_config,
-                bot_name=bot_config["bot_name"]
+                bot_name=bot_config["bot_name"],
+                custom_strategy=temp_strategy
             )
             backtest.run()
             
@@ -653,12 +1064,26 @@ class DynamicStrategyRunner:
             def __init__(self, signals_list):
                 self.signals = {sig['timestamp']: sig for sig in signals_list}
             
-            def generate_signals(self, data):
+            def analyze(self, data):
+                """
+                Метод который ожидает Playground.
+                Возвращает словарь с сигналом.
+                """
                 current_time = data.index[-1]
                 signal_data = self.signals.get(current_time)
                 if signal_data:
-                    return signal_data['signal']
-                return "HOLD"
+                    signal_type = signal_data['signal']
+                    price = signal_data['price']
+                    
+                    # Преобразуем наши сигналы в формат который понимает Playground
+                    if signal_type in ['LONG_ENTRY', 'SHORT_ENTRY']:
+                        return {
+                            'signal': 'buy',
+                            'target_tp_price': price * 1.02  # 2% прибыль
+                        }
+                
+                # Ни одного сигнала - возвращаем None
+                return None
         
         return TempStrategy(signals)
 
@@ -666,7 +1091,6 @@ class DynamicStrategyRunner:
 class EvolutionaryStrategyDiscovery:
     """
     Главный класс для поиска стратегий через эволюционные алгоритмы.
-    Полностью переписанная версия.
     """
     
     def __init__(self, config_path: str):
@@ -684,6 +1108,7 @@ class EvolutionaryStrategyDiscovery:
         
         self.logger.info(f"✅ Система поиска стратегий инициализирована")
         self.logger.info(f"📊 Загружено индикаторов: {len(self.indicator_pool)}")
+        self.logger.info(f"⚡ Количество процессов для параллелизации: {self.config.get('performance', {}).get('max_workers', mp.cpu_count())}")
         
     def _load_config(self, path: str) -> Dict:
         """Загружает конфигурацию."""
@@ -798,18 +1223,92 @@ class EvolutionaryStrategyDiscovery:
         long_entry = self._generate_conditions(indicators, num_conditions, 'long_entry')
         short_entry = self._generate_conditions(indicators, num_conditions, 'short_entry')
         
-        # Простые правила выхода (можно усложнить)
-        long_exit = [{'type': 'threshold', 'indicator': 'RSI', 'operator': '>', 'threshold': 70}]
-        short_exit = [{'type': 'threshold', 'indicator': 'RSI', 'operator': '<', 'threshold': 30}]
+        # Простые правила выхода (можно усложить)
+        long_exit = self._generate_exit_conditions(indicators, 'long_exit')
+        short_exit = self._generate_exit_conditions(indicators, 'short_exit')
         
         return {
             'long_entry_conditions': long_entry,
             'long_exit_conditions': long_exit,
             'short_entry_conditions': short_entry,
             'short_exit_conditions': short_exit,
-            'logic_operator': random.choice(['AND', 'OR']),
+            'logic_operator': random.choice(['AND', 'OR', 'OR']),  # Увеличиваем вероятность OR
             'risk_management': self._generate_risk_rules()
         }
+        
+    def _generate_exit_conditions(self, indicators: List[str], signal_type: str) -> List[Dict]:
+        """Генерирует условия выхода на основе используемых индикаторов."""
+        exit_conditions = []
+        
+        # Приоритетные индикаторы для выхода (в порядке приоритета)
+        priority_indicators = ['RSI', 'STOCH_k', 'STOCH_d', 'CCI', 'MFI', 'WILLR']
+        
+        # Ищем приоритетные индикаторы в списке
+        available_priority = [ind for ind in priority_indicators if ind in indicators]
+        
+        if available_priority:
+            # Используем приоритетный индикатор
+            indicator = available_priority[0]
+            
+            if 'long_exit' in signal_type:
+                # Выход из лонга - когда перекуплено
+                if indicator == 'RSI':
+                    threshold = random.uniform(70, 85)
+                    operator = '>'
+                elif indicator in ['STOCH_k', 'STOCH_d']:
+                    threshold = random.uniform(80, 95)
+                    operator = '>'
+                elif indicator == 'CCI':
+                    threshold = random.uniform(100, 200)
+                    operator = '>'
+                elif indicator == 'MFI':
+                    threshold = random.uniform(70, 85)
+                    operator = '>'
+                elif indicator == 'WILLR':
+                    threshold = random.uniform(-20, -10)
+                    operator = '>'
+                else:
+                    threshold = 70
+                    operator = '>'
+            else:
+                # Выход из шорта - когда перепродано
+                if indicator == 'RSI':
+                    threshold = random.uniform(15, 30)
+                    operator = '<'
+                elif indicator in ['STOCH_k', 'STOCH_d']:
+                    threshold = random.uniform(5, 20)
+                    operator = '<'
+                elif indicator == 'CCI':
+                    threshold = random.uniform(-200, -100)
+                    operator = '<'
+                elif indicator == 'MFI':
+                    threshold = random.uniform(15, 30)
+                    operator = '<'
+                elif indicator == 'WILLR':
+                    threshold = random.uniform(-90, -80)
+                    operator = '<'
+                else:
+                    threshold = 30
+                    operator = '<'
+            
+            exit_conditions.append({
+                'type': 'threshold',
+                'indicator': indicator,
+                'operator': operator,
+                'threshold': threshold
+            })
+        else:
+            # Если нет приоритетных, используем любой доступный
+            if indicators:
+                indicator = random.choice(indicators)
+                exit_conditions.append({
+                    'type': 'threshold',
+                    'indicator': indicator,
+                    'operator': '>' if 'long_exit' in signal_type else '<',
+                    'threshold': self._generate_threshold_value(indicator, signal_type)
+                })
+        
+        return exit_conditions
     
     def _generate_conditions(self, indicators: List[str], num_conditions: int, signal_type: str) -> List[Dict]:
         """Генерирует условия для определенного типа сигнала."""
@@ -821,38 +1320,114 @@ class EvolutionaryStrategyDiscovery:
             condition_type = random.choice(['threshold', 'crossover'] if rules_config['enable_crossovers'] else ['threshold'])
             
             if condition_type == 'threshold':
-                conditions.append({
+                # Проблема здесь! Используем базовое имя индикатора
+                # Но в данных он добавляется с параметрами!
+                condition = {
                     'type': 'threshold',
-                    'indicator': indicator,
+                    'indicator': indicator,  # Например, "RSI" вместо "RSI_14"
                     'operator': random.choice(['>', '<', '>=', '<=']),
                     'threshold': self._generate_threshold_value(indicator, signal_type)
-                })
+                }
+                self.logger.debug(f"Генерируем threshold условие: {condition}")
+                
+                # Логируем примеры условий каждые 1000 стратегий
+                if hasattr(self, 'condition_debug_count'):
+                    self.condition_debug_count += 1
+                else:
+                    self.condition_debug_count = 1
+                
+                if self.condition_debug_count % 1000 == 1:
+                    self.logger.info(f"🔍 Пример условия: {condition['indicator']} {condition['operator']} {condition['threshold']:.2f}")
+                
+                conditions.append(condition)
             elif condition_type == 'crossover':
                 if len(indicators) > 1:
                     other_indicator = random.choice([ind for ind in indicators if ind != indicator])
-                    conditions.append({
+                    condition = {
                         'type': 'crossover',
                         'indicator1': indicator,
                         'indicator2': other_indicator,
                         'direction': random.choice(['above', 'below'])
-                    })
+                    }
+                    self.logger.debug(f"Генерируем crossover условие: {condition}")
+                    conditions.append(condition)
         
         return conditions
     
     def _generate_threshold_value(self, indicator: str, signal_type: str) -> float:
-        """Генерирует пороговое значение для индикатора."""
-        # Примерные диапазоны для разных индикаторов
+        """Генерирует реалистичные пороговые значения для индикаторов."""
+        # Реалистичные диапазоны для разных индикаторов
         ranges = {
-            'RSI': {'long': (20, 40), 'short': (60, 80)},
-            'MACD': {'long': (-0.1, 0.1), 'short': (-0.1, 0.1)},
-            'SMA': {'long': (0.98, 1.02), 'short': (0.98, 1.02)},  # Относительно цены
+            'RSI': {
+                'long': (20, 45),    # Oversold-neutral зона для входа в лонг
+                'short': (55, 80)    # Neutral-overbought для входа в шорт
+            },
+            'MACD': {
+                'long': (-0.01, 0.01),   # Около нуля
+                'short': (-0.01, 0.01)
+            },
+            'SMA': {
+                'long': (0.98, 1.02),    # ±2% от текущей цены
+                'short': (0.98, 1.02)
+            },
+            'EMA': {
+                'long': (0.95, 1.05),    # ±5% от текущей цены
+                'short': (0.95, 1.05)
+            },
+            'CCI': {
+                'long': (-200, 0),       # Oversold зона
+                'short': (0, 200)        # Overbought зона
+            },
+            'WILLR': {
+                'long': (-80, -20),      # Williams %R oversold
+                'short': (-80, -20)
+            },
+            'ADX': {
+                'long': (20, 40),        # Средний тренд
+                'short': (20, 40)
+            },
+            'MFI': {
+                'long': (20, 40),        # Money Flow oversold
+                'short': (60, 80)        # Money Flow overbought
+            },
+            'ATR': {
+                'long': (100, 2000),     # Волатильность для BTC
+                'short': (100, 2000)
+            },
+            'STOCH_k': {
+                'long': (10, 30),        # Stochastic oversold
+                'short': (70, 90)        # Stochastic overbought
+            },
+            'STOCH_d': {
+                'long': (10, 30),
+                'short': (70, 90)
+            },
+            'BB_upper': {
+                'long': (0.98, 1.02),    # Относительно цены
+                'short': (0.98, 1.02)
+            },
+            'BB_lower': {
+                'long': (0.98, 1.02),
+                'short': (0.98, 1.02)
+            },
+            'BB_middle': {
+                'long': (0.98, 1.02),
+                'short': (0.98, 1.02)
+            }
         }
         
+        # Определяем тип сигнала
+        signal_key = 'long' if 'long' in signal_type else 'short'
+        
         if indicator in ranges:
-            range_values = ranges[indicator].get('long' if 'long' in signal_type else 'short', (0, 100))
+            range_values = ranges[indicator][signal_key]
             return random.uniform(range_values[0], range_values[1])
         else:
-            return random.uniform(0, 100)  # Дефолтный диапазон
+            # Дефолтные безопасные диапазоны
+            if 'long' in signal_type:
+                return random.uniform(20, 40)  # Низкие значения для лонга
+            else:
+                return random.uniform(60, 80)  # Высокие значения для шорта
     
     def _generate_risk_rules(self) -> Dict:
         """Генерирует правила риск-менеджмента."""
@@ -985,6 +1560,9 @@ class EvolutionaryStrategyDiscovery:
         
         self.logger.info("🧬 Запуск эволюционного поиска стратегий")
         self.logger.info(f"📊 Популяция: {population_size}, Поколения: {num_generations}")
+        # Проверяем настройки производительности
+        max_workers = self.config.get('performance', {}).get('max_workers', mp.cpu_count())
+        self.logger.info(f"⚡ Параллельная обработка: {max_workers} процессов")
         
         # Инициализация популяции
         population = [self.generate_individual() for _ in range(population_size)]
@@ -995,15 +1573,50 @@ class EvolutionaryStrategyDiscovery:
             for generation in range(num_generations):
                 gen_start_time = time.time()
                 
-                # Оценка популяции
+                self.logger.info(f"🧬 Начинаем поколение {generation}: генерация и оценка {population_size} стратегий")
+                
+                # Оценка популяции (параллельно)
                 fitness_scores = []
                 successful_individuals = 0
                 
-                for individual in population:
-                    result = self.objective.evaluate_strategy_candidate(individual, data)
-                    fitness_scores.append(result['score'])
-                    if result['success']:
-                        successful_individuals += 1
+                # Определяем количество процессов (по умолчанию - количество ядер)
+                max_workers = self.config.get('performance', {}).get('max_workers', mp.cpu_count())
+                self.logger.info(f"  🚀 Параллельная оценка {population_size} особей на {max_workers} процессах")
+                
+                # Подготавливаем данные для передачи в процессы
+                data_dict = {
+                    'data': data.to_dict('records'),
+                    'index': data.index.astype(str).tolist()
+                }
+                
+                # Параллельная обработка
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # Отправляем задачи
+                    future_to_index = {
+                        executor.submit(evaluate_individual_worker, individual, self.config, data_dict): i
+                        for i, individual in enumerate(population)
+                    }
+                    
+                    # Собираем результаты
+                    fitness_scores = [0] * len(population)  # Инициализируем список
+                    completed = 0
+                    
+                    for future in as_completed(future_to_index):
+                        index = future_to_index[future]
+                        try:
+                            result = future.result()
+                            fitness_scores[index] = result['score']
+                            if result['success']:
+                                successful_individuals += 1
+                                
+                            # Логируем прогресс
+                            completed += 1
+                            if completed % 20 == 0:  # Логируем каждые 20 завершенных
+                                self.logger.info(f"  📊 Завершено {completed}/{population_size} оценок")
+                                
+                        except Exception as e:
+                            self.logger.warning(f"  ⚠️ Ошибка оценки особи {index}: {e}")
+                            fitness_scores[index] = self.config['scoring']['penalties']['critical_error']
                 
                 # Обновляем лучшую особь
                 best_idx = fitness_scores.index(max(fitness_scores))
@@ -1192,8 +1805,9 @@ class {strategy_name.title().replace('_', '')}Strategy:
                     indicator_func = getattr(talib, indicator_name.upper())
                     
                     if indicator_name.upper() == 'RSI':
-                        result = indicator_func(close, timeperiod=params.get('timeperiod', 14))
-                        enriched_data[f'RSI_{{params.get("timeperiod", 14)}}'] = result
+                        timeperiod = params.get('timeperiod', 14)
+                        result = indicator_func(close, timeperiod=timeperiod)
+                        enriched_data['RSI'] = result
                     
                     elif indicator_name.upper() == 'MACD':
                         macd, macdsignal, macdhist = indicator_func(
@@ -1207,12 +1821,14 @@ class {strategy_name.title().replace('_', '')}Strategy:
                         enriched_data['MACD_hist'] = macdhist
                     
                     elif indicator_name.upper() == 'SMA':
-                        result = indicator_func(close, timeperiod=params.get('timeperiod', 20))
-                        enriched_data[f'SMA_{{params.get("timeperiod", 20)}}'] = result
+                        timeperiod = params.get('timeperiod', 20)
+                        result = indicator_func(close, timeperiod=timeperiod)
+                        enriched_data['SMA'] = result
                     
                     elif indicator_name.upper() == 'EMA':
-                        result = indicator_func(close, timeperiod=params.get('timeperiod', 20))
-                        enriched_data[f'EMA_{{params.get("timeperiod", 20)}}'] = result
+                        timeperiod = params.get('timeperiod', 20)
+                        result = indicator_func(close, timeperiod=timeperiod)
+                        enriched_data['EMA'] = result
                     
                     elif indicator_name.upper() == 'BBANDS':
                         upper, middle, lower = indicator_func(
@@ -1228,7 +1844,7 @@ class {strategy_name.title().replace('_', '')}Strategy:
                     # Можно добавить другие индикаторы по аналогии
                     
             except Exception as e:
-                print(f"Ошибка добавления индикатора {{indicator_name}}: {{e}}")
+                print(f"Ошибка добавления индикатора: {{e}}")
         
         return enriched_data
     
@@ -1362,6 +1978,10 @@ def main():
             auto_adjust=True,
             progress=False
         )
+        
+        # Исправляем проблему с мультииндексными колонками
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.droplevel(1)
         
         if data is None or data.empty:
             raise ValueError("Не удалось загрузить данные")
